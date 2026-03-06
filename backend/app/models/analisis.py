@@ -4,7 +4,7 @@ Modelo: Resultado del análisis IA de un candidato.
 
 import enum
 from datetime import datetime, timezone
-from sqlalchemy import Column, Integer, Float, Text, DateTime, ForeignKey, Enum, JSON
+from sqlalchemy import Column, Integer, Float, String, Text, DateTime, ForeignKey, Enum, JSON
 from sqlalchemy.orm import relationship
 
 from app.db.database import Base
