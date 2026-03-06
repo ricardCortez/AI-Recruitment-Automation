@@ -1,0 +1,42 @@
+# ── Framework principal ───────────────────────────
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+
+# ── Base de datos ─────────────────────────────────
+sqlalchemy==2.0.30
+alembic==1.13.1
+
+# ── Validación de datos ───────────────────────────
+pydantic==2.7.1
+pydantic-settings==2.2.1
+email-validator==2.1.1
+
+# ── Seguridad / Auth ──────────────────────────────
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+pyotp==2.9.0
+qrcode[pil]==7.4.2
+
+# ── Extracción de PDFs ────────────────────────────
+pdfplumber==0.11.0
+PyMuPDF==1.24.2
+
+# ── IA — Ollama ───────────────────────────────────
+ollama==0.2.1
+
+# ── IA — OpenAI (opcional) ────────────────────────
+openai==1.30.1
+
+# ── Exportación Excel ─────────────────────────────
+openpyxl==3.1.2
+
+# ── Utilidades ───────────────────────────────────
+python-multipart==0.0.9     # Subida de archivos
+python-dotenv==1.0.1
+aiofiles==23.2.1
+httpx==0.27.0
+
+# ── Testing ───────────────────────────────────────
+pytest==8.2.0
+pytest-asyncio==0.23.6
+httpx==0.27.0

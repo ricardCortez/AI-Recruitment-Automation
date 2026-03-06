@@ -1,0 +1,46 @@
+# ── Python ──────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+venv/
+env/
+.venv/
+
+# ── Variables de entorno ─────────────────────────
+.env
+!.env.example
+
+# ── Base de datos ────────────────────────────────
+backend/database/*.db
+backend/database/*.db-shm
+backend/database/*.db-wal
+
+# ── Archivos subidos ─────────────────────────────
+backend/storage/cvs/*
+backend/storage/exports/*
+!backend/storage/cvs/.gitkeep
+!backend/storage/exports/.gitkeep
+
+# ── Logs ─────────────────────────────────────────
+*.log
+logs/
+
+# ── Node / Frontend ──────────────────────────────
+node_modules/
+frontend/dist/
+frontend/.vite/
+.npm
+
+# ── IDEs ─────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
