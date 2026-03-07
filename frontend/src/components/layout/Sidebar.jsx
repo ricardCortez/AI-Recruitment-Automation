@@ -110,6 +110,17 @@ export default function Sidebar() {
           </div>
         </div>
 
+        <NavLink to="/perfil"
+          className={({ isActive }) =>
+            `flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-semibold transition-all ${
+              isActive ? 'text-cyan-400' : 'text-slate-400 hover:text-white hover:bg-[#1A2235]'
+            }`
+          }
+          style={({ isActive }) => isActive ? { background: 'rgba(34,211,238,0.08)' } : {}}>
+          <span className="text-base">⚙️</span>
+          Mi perfil
+        </NavLink>
+
         <button onClick={handleLogout}
           className="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-semibold text-slate-500 hover:text-red-400 hover:bg-[#1A2235] transition-all">
           <span className="text-base">🚪</span>
