@@ -1,0 +1,9 @@
+{
+  "dispositivo": "gpu",
+  "num_gpu": -1,
+  "num_threads": 4,
+  "modelo": "qwen2.5:14b",
+  "max_tokens": 2500,
+  "temperature": 0,
+  "seed": 42
+}

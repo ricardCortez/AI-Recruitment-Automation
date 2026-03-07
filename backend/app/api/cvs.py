@@ -1,12 +1,13 @@
 """
-Endpoints de carga de CVs y disparo del análisis IA.
+Endpoints de CVs. El estado devuelve progreso granular por sub-pasos.
 """
 
+import re
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 from typing import List
 
-from app.db.database import get_db
+from app.db.database import get_db, SessionLocal
 from app.models.user import User
 from app.models.proceso import Proceso
 from app.models.candidato import Candidato
@@ -18,6 +19,24 @@ from app.schemas.proceso import CandidatoOut
 router = APIRouter()
 
 
+# ── Ruta fija ANTES de /{proceso_id}/... ────────────────────────────────────
+@router.get("/ollama/estado")
+async def estado_ollama(_: User = Depends(require_reclutador_or_admin)):
+    from app.services.ia_service import verificar_ollama
+    return await verificar_ollama()
+
+
+# ── Background task con sesión propia ────────────────────────────────────────
+def analizar_en_background(proceso_id: int):
+    db = SessionLocal()
+    try:
+        import asyncio
+        asyncio.run(analizar_proceso(proceso_id, db))
+    finally:
+        db.close()
+
+
+# ── Upload CVs ────────────────────────────────────────────────────────────────
 @router.post("/{proceso_id}/upload", response_model=list[CandidatoOut])
 async def subir_cvs(
     proceso_id: int,
@@ -25,29 +44,27 @@ async def subir_cvs(
     current_user: User = Depends(require_reclutador_or_admin),
     db: Session = Depends(get_db),
 ):
-    """Sube uno o más PDFs de CVs a un proceso existente."""
     proceso = db.query(Proceso).filter(Proceso.id == proceso_id).first()
     if not proceso:
         raise HTTPException(status_code=404, detail="Proceso no encontrado.")
+    if not files:
+        raise HTTPException(status_code=400, detail="No se recibieron archivos.")
 
-    candidatos_creados = []
+    creados = []
     for file in files:
         validar_pdf(file)
         destino = get_cv_path(proceso_id, file.filename)
         await guardar_archivo(file, destino)
-
-        candidato = Candidato(
-            proceso_id=proceso_id,
-            archivo_pdf=str(destino),
-        )
+        candidato = Candidato(proceso_id=proceso_id, archivo_pdf=str(destino))
         db.add(candidato)
         db.commit()
         db.refresh(candidato)
-        candidatos_creados.append(candidato)
+        creados.append(candidato)
 
-    return candidatos_creados
+    return creados
 
 
+# ── Disparar análisis ─────────────────────────────────────────────────────────
 @router.post("/{proceso_id}/analizar")
 async def analizar(
     proceso_id: int,
@@ -55,34 +72,60 @@ async def analizar(
     current_user: User = Depends(require_reclutador_or_admin),
     db: Session = Depends(get_db),
 ):
-    """
-    Dispara el análisis IA de todos los CVs del proceso.
-    Corre en background para no bloquear la respuesta.
-    """
     proceso = db.query(Proceso).filter(Proceso.id == proceso_id).first()
     if not proceso:
         raise HTTPException(status_code=404, detail="Proceso no encontrado.")
 
     total = db.query(Candidato).filter(Candidato.proceso_id == proceso_id).count()
     if total == 0:
-        raise HTTPException(status_code=400, detail="No hay CVs cargados en este proceso.")
+        raise HTTPException(status_code=400, detail="No hay CVs cargados.")
 
-    background_tasks.add_task(analizar_proceso, proceso_id, db)
+    background_tasks.add_task(analizar_en_background, proceso_id)
+    return {"mensaje": f"Análisis iniciado para {total} CV{'s' if total != 1 else ''}.", "total": total}
 
-    return {"mensaje": f"Análisis iniciado para {total} CVs.", "proceso_id": proceso_id}
+
+# ── Cancelar análisis ────────────────────────────────────────────────────────
+@router.post("/{proceso_id}/cancelar")
+def cancelar_analisis(
+    proceso_id: int,
+    _: User = Depends(require_reclutador_or_admin),
+    db: Session = Depends(get_db),
+):
+    from app.services.analisis_service import solicitar_cancelacion
+    from app.models.analisis import Analisis, EstadoAnalisis
+
+    proceso = db.query(Proceso).filter(Proceso.id == proceso_id).first()
+    if not proceso:
+        raise HTTPException(status_code=404, detail="Proceso no encontrado.")
+
+    solicitar_cancelacion(proceso_id)
+    return {"mensaje": "Cancelación solicitada. Se detendrá al terminar el CV actual."}
 
 
+# ── Estado con progreso granular ──────────────────────────────────────────────
 @router.get("/{proceso_id}/estado")
 def estado_analisis(
     proceso_id: int,
     _: User = Depends(require_reclutador_or_admin),
     db: Session = Depends(get_db),
 ):
-    """Retorna el progreso del análisis para mostrar en la pantalla de carga."""
     from app.models.analisis import Analisis, EstadoAnalisis
 
+    db.expire_all()
+
     candidatos = db.query(Candidato).filter(Candidato.proceso_id == proceso_id).all()
-    estados = {"total": len(candidatos), "pendiente": 0, "procesando": 0, "completado": 0, "error": 0}
+    total = len(candidatos)
+    estados = {
+        "total": total,
+        "pendiente": 0, "procesando": 0, "completado": 0, "error": 0,
+        "log_actual": "",
+        "sub_pct": 0,          # Progreso dentro del CV actual (0-100)
+        "progreso_global": 0,  # Progreso total incluyendo sub-pasos (0-100)
+    }
+
+    completados = 0
+    sub_pct     = 0
+    log_actual  = ""
 
     for c in candidatos:
         an = db.query(Analisis).filter(Analisis.candidato_id == c.id).first()
@@ -90,6 +133,52 @@ def estado_analisis(
             estados["pendiente"] += 1
         else:
             estados[an.estado.value] += 1
+            if an.estado == EstadoAnalisis.COMPLETADO:
+                completados += 1
+            elif an.estado == EstadoAnalisis.ERROR:
+                completados += 1  # Contar errores como "procesados" para la barra
+            elif an.estado == EstadoAnalisis.PROCESANDO and an.error_msg:
+                # Parsear [PROG:45] Mensaje
+                match = re.match(r'\[PROG:(\d+)\]\s*(.*)', an.error_msg)
+                if match:
+                    sub_pct    = int(match.group(1))
+                    log_actual = match.group(2)
 
-    estados["listo"] = estados["completado"] == estados["total"] and estados["total"] > 0
+    estados["log_actual"] = log_actual
+    estados["sub_pct"]    = sub_pct
+
+    # Progreso global: CVs completados + fracción del CV actual
+    if total > 0:
+        estados["progreso_global"] = int((completados * 100 + sub_pct) / total)
+
+    estados["listo"] = total > 0 and (estados["completado"] + estados["error"]) == total
+
+    # Detectar si fue cancelado (algún error_msg dice "cancelado")
+    from app.services.analisis_service import cancelacion_activa
+    estados["cancelado"] = cancelacion_activa(proceso_id)
+
     return estados
+
+
+# ── Eliminar candidato ────────────────────────────────────────────────────────
+@router.delete("/{proceso_id}/candidatos/{candidato_id}")
+def eliminar_candidato(
+    proceso_id: int,
+    candidato_id: int,
+    _: User = Depends(require_reclutador_or_admin),
+    db: Session = Depends(get_db),
+):
+    import os
+    c = db.query(Candidato).filter(
+        Candidato.id == candidato_id, Candidato.proceso_id == proceso_id
+    ).first()
+    if not c:
+        raise HTTPException(status_code=404, detail="Candidato no encontrado.")
+    try:
+        if os.path.exists(c.archivo_pdf):
+            os.remove(c.archivo_pdf)
+    except Exception:
+        pass
+    db.delete(c)
+    db.commit()
+    return {"mensaje": "Candidato eliminado."}

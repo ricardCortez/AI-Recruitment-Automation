@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager
 from app.core.config import settings
 from app.db.database import create_tables
 from app.db.seed import run_seed
-from app.api import auth, users, procesos, cvs, reportes
+from app.api import auth, users, procesos, cvs, reportes, config
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -58,6 +58,7 @@ app.include_router(users.router,     prefix=f"{API_PREFIX}/users",    tags=["Usu
 app.include_router(procesos.router,  prefix=f"{API_PREFIX}/procesos", tags=["Procesos"])
 app.include_router(cvs.router,       prefix=f"{API_PREFIX}/cvs",      tags=["CVs"])
 app.include_router(reportes.router,  prefix=f"{API_PREFIX}/reportes", tags=["Reportes"])
+app.include_router(config.router,    prefix=f"{API_PREFIX}/config",   tags=["Configuración"])
 
 
 @app.get("/health", tags=["Sistema"])

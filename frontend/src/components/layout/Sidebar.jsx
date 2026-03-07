@@ -8,7 +8,8 @@ const NAV_ITEMS = [
 ]
 
 const NAV_ADMIN = [
-  { to: '/usuarios', icon: '👥', label: 'Usuarios' },
+  { to: '/usuarios',      icon: '👥', label: 'Usuarios' },
+  { to: '/configuracion', icon: '⚡', label: 'Configuración IA' },
 ]
 
 export default function Sidebar() {

@@ -12,6 +12,7 @@ import DetalleCandidato from './pages/DetalleCandidato'
 import Usuarios        from './pages/Usuarios'
 import CrearUsuario    from './pages/CrearUsuario'
 import Perfil          from './pages/Perfil'
+import Configuracion   from './pages/Configuracion'
 
 export default function App() {
   return (
@@ -40,6 +41,7 @@ export default function App() {
             <Route path="/usuarios"                    element={<Usuarios />} />
             <Route path="/usuarios/nuevo"              element={<CrearUsuario />} />
             <Route path="/perfil"                      element={<Perfil />} />
+            <Route path="/configuracion"               element={<Configuracion />} />
           </Route>
 
           {/* Fallback */}
