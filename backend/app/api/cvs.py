@@ -13,7 +13,7 @@ from app.models.proceso import Proceso
 from app.models.candidato import Candidato
 from app.core.dependencies import require_reclutador_or_admin
 from app.utils.file_utils import validar_pdf, get_cv_path, guardar_archivo
-from app.services.analisis_service import analizar_proceso
+from app.services.analisis_service import analizar_proceso, solicitar_cancelacion, cancelacion_activa
 from app.schemas.proceso import CandidatoOut
 
 router = APIRouter()
@@ -28,10 +28,15 @@ async def estado_ollama(_: User = Depends(require_reclutador_or_admin)):
 
 # ── Background task con sesión propia ────────────────────────────────────────
 def analizar_en_background(proceso_id: int):
+    """Background task — síncrono, sin asyncio.run()."""
     db = SessionLocal()
     try:
-        import asyncio
-        asyncio.run(analizar_proceso(proceso_id, db))
+        analizar_proceso(proceso_id, db)
+    except Exception as e:
+        import traceback
+        from app.utils.logger import get_logger
+        get_logger(__name__).error(f"Error crítico en background task: {e}
+{traceback.format_exc()}")
     finally:
         db.close()
 
@@ -91,7 +96,6 @@ def cancelar_analisis(
     _: User = Depends(require_reclutador_or_admin),
     db: Session = Depends(get_db),
 ):
-    from app.services.analisis_service import solicitar_cancelacion
     from app.models.analisis import Analisis, EstadoAnalisis
 
     proceso = db.query(Proceso).filter(Proceso.id == proceso_id).first()
