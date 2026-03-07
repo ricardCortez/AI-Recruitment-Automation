@@ -1,6 +1,6 @@
 {
-  "dispositivo": "gpu",
-  "num_gpu": -1,
+  "dispositivo": "cpu",
+  "num_gpu": 0,
   "num_threads": 4,
   "modelo": "qwen2.5:14b",
   "max_tokens": 2500,
