@@ -1,156 +1,134 @@
 """
-Motor de IA — completamente SÍNCRONO.
-ollama.chat() es bloqueante — no necesita async/await.
-Esto evita conflictos de event loop en background tasks.
+Motor de IA - SINCRONO, optimizado para velocidad.
+Tiempos medidos: ~3m30s por CV con qwen2.5:14b en CPU.
+Objetivo con optimizaciones: ~2m20s por CV (-35%).
 """
 
 import json
 import re
+import os
+import threading
 from app.core.config import settings
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-PROMPT_ANALISIS = """Sos un experto en Recursos Humanos. Evaluá este CV contra los requisitos del puesto.
+# Prompt con rubrica clara para evitar puntajes consecutivos
+PROMPT_COMPLETO = """Experto en RRHH. Evaluá este CV con criterio objetivo e independiente.
 
 PUESTO: {nombre_puesto}
-
 REQUISITOS:
 {requisitos}
 
 CV:
 {texto_cv}
 
-Respondé SOLO con este JSON, sin texto adicional ni bloques de código:
-{{
-  "puntaje_total": <número 0-100>,
-  "criterios": [
-    {{
-      "criterio": "<requisito evaluado>",
-      "cumple": "<si | parcial | no>",
-      "descripcion": "<1-2 oraciones con evidencia del CV>",
-      "puntaje": <número 0-100>
-    }}
-  ],
-  "resumen": "<3-4 oraciones: fortalezas, brechas y recomendación>"
-}}
+RUBRICA DE PUNTAJE POR CRITERIO:
+- 90-100: Cumple ampliamente, supera lo solicitado
+- 70-89:  Cumple el requisito claramente
+- 50-69:  Cumple parcialmente, hay brechas menores
+- 25-49:  Cumple muy poco, brechas importantes
+- 0-24:   No cumple o no hay evidencia
 
-Evaluá CADA requisito. Sé objetivo y basate solo en lo que dice el CV."""
+IMPORTANTE: Cada criterio es INDEPENDIENTE. No ordenes los puntajes.
+Asigná el puntaje que corresponda a la evidencia, no al ranking del candidato.
 
-PROMPT_DATOS = """Del siguiente texto de CV extraé los datos de contacto.
-Respondé SOLO con este JSON, sin texto adicional:
-{{
-  "nombre": "<nombre completo o null>",
-  "email": "<email o null>",
-  "telefono": "<teléfono o null>"
-}}
-
-CV:
-{texto}"""
+JSON de respuesta (sin texto adicional):
+{{"nombre":"<nombre completo o null>","email":"<email o null>","telefono":"<telefono o null>","puntaje_total":<promedio ponderado 0-100>,"criterios":[{{"criterio":"<requisito exacto>","cumple":"<si|parcial|no>","descripcion":"<evidencia concreta del CV>","puntaje":<0-100 segun rubrica>}}],"resumen":"<3 oraciones: fortalezas concretas, brechas detectadas, recomendacion final>"}}"""
 
 
-def _get_ollama_options() -> dict:
-    """Lee la config guardada para GPU/CPU/threads."""
+def _get_opciones(max_ctx: int = 3072) -> dict:
+    total_cores = os.cpu_count() or 4
     try:
         from app.api.config import leer_config
         cfg = leer_config()
+        dispositivo = cfg.get("dispositivo", "cpu")
+        threads_cfg = cfg.get("num_threads", total_cores)
+        # Dejar 2 cores libres para el sistema
+        threads = min(threads_cfg, max(total_cores - 2, 2))
         return {
             "temperature": 0,
             "seed":        42,
-            "num_gpu":     999 if cfg.get("dispositivo") == "gpu" else 0,
-            "num_thread":  cfg.get("num_threads", 4),
-            "num_ctx":     8192,
+            "num_gpu":     999 if dispositivo == "gpu" else 0,
+            "num_thread":  threads,
+            "num_ctx":     max_ctx,
         }
     except Exception:
-        return {"temperature": 0, "seed": 42, "num_gpu": 0, "num_thread": 4}
+        return {
+            "temperature": 0,
+            "seed":        42,
+            "num_gpu":     0,
+            "num_thread":  max(total_cores - 2, 2),
+            "num_ctx":     max_ctx,
+        }
 
 
-def analizar_cv(nombre_puesto: str, requisitos: str, texto_cv: str) -> dict:
-    """Analiza un CV contra los requisitos. SÍNCRONO."""
+def analizar_cv_completo(nombre_puesto: str, requisitos: str, texto_cv: str) -> dict:
+    """
+    Una sola llamada a Ollama: extrae datos del candidato + analiza el CV.
+    Sin timeout — el analisis puede tardar lo que necesite.
+    """
     if not texto_cv or len(texto_cv.strip()) < 50:
         raise ValueError("CV sin texto suficiente para analizar.")
 
-    prompt = PROMPT_ANALISIS.format(
+    # 3000 chars captura toda la info relevante de un CV (experiencia, educacion, skills)
+    # Reducir de 4000 a 3000 = ~25% menos tokens de entrada
+    prompt = PROMPT_COMPLETO.format(
         nombre_puesto=nombre_puesto,
         requisitos=requisitos,
-        texto_cv=texto_cv[:7000],
+        texto_cv=texto_cv[:3000],
     )
 
     if settings.IA_PROVIDER == "ollama":
-        return _ollama(prompt, max_tokens=2500)
+        return _llamar_ollama(prompt)
     elif settings.IA_PROVIDER == "openai":
-        return _openai(prompt)
+        return _llamar_openai(prompt)
     else:
-        raise ValueError(f"IA_PROVIDER inválido: '{settings.IA_PROVIDER}'")
+        raise ValueError("IA_PROVIDER invalido: '{}'".format(settings.IA_PROVIDER))
 
 
-def extraer_datos_cv(texto_cv: str) -> dict:
-    """Extrae nombre, email y teléfono del CV con IA. SÍNCRONO."""
-    prompt = PROMPT_DATOS.format(texto=texto_cv[:2000])
-    try:
-        if settings.IA_PROVIDER == "ollama":
-            opts = _get_ollama_options()
-            opts["num_predict"] = 150
-            opts.pop("num_ctx", None)
-            import ollama
-            r = ollama.chat(
-                model=settings.OLLAMA_MODEL,
-                messages=[{"role": "user", "content": prompt}],
-                options=opts,
-            )
-            data = _parsear_json(r["message"]["content"].strip())
-        else:
-            import openai
-            client = openai.OpenAI(api_key=settings.OPENAI_API_KEY)
-            r = client.chat.completions.create(
-                model=settings.OPENAI_MODEL,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0,
-                max_tokens=100,
-                response_format={"type": "json_object"},
-            )
-            data = _parsear_json(r.choices[0].message.content.strip())
-
-        return {
-            "nombre":   _limpiar(data.get("nombre")),
-            "email":    _limpiar(data.get("email")),
-            "telefono": _limpiar(data.get("telefono")),
-        }
-    except Exception as e:
-        logger.warning(f"No se pudo extraer datos con IA: {e}")
-        return {"nombre": None, "email": None, "telefono": None}
-
-
-def _ollama(prompt: str, max_tokens: int = 2500) -> dict:
+def _llamar_ollama(prompt: str) -> dict:
     try:
         import ollama
     except ImportError:
-        raise RuntimeError("Librería 'ollama' no instalada. Ejecutá: pip install ollama")
+        raise RuntimeError("Libreria 'ollama' no instalada. Ejecuta: pip install ollama")
 
-    opts = _get_ollama_options()
+    # Calcular contexto minimo necesario (no desperdiciar memoria)
+    prompt_tokens = len(prompt) // 3
+    max_tokens    = 1200  # Suficiente para el JSON completo con todos los criterios
+    ctx           = min(prompt_tokens + max_tokens + 256, 3072)
+
+    opts = _get_opciones(max_ctx=ctx)
     opts["num_predict"] = max_tokens
 
+    logger.info("  Ollama: modelo=%s ctx=%s gpu=%s threads=%s max_tokens=%s",
+                settings.OLLAMA_MODEL, ctx, opts["num_gpu"], opts["num_thread"], max_tokens)
+
+    # Sin timeout — esperamos lo que sea necesario
+    # El analisis manual de un CV toma 15-30 min; 2-4 min de IA es siempre mejor
     try:
         r = ollama.chat(
             model=settings.OLLAMA_MODEL,
             messages=[{"role": "user", "content": prompt}],
             options=opts,
         )
-        return _parsear_json(r["message"]["content"].strip())
+        texto = r["message"]["content"].strip()
+        logger.info("  Respuesta: %s chars", len(texto))
+        return _parsear(texto)
     except Exception as e:
         msg = str(e).lower()
         if "connection" in msg or "refused" in msg:
-            raise RuntimeError("Ollama no responde. Verificá que esté corriendo.")
+            raise RuntimeError("Ollama no responde. Verifica que este corriendo.")
         if "not found" in msg or "pull" in msg:
-            raise RuntimeError(f"Modelo '{settings.OLLAMA_MODEL}' no descargado.")
-        raise RuntimeError(f"Error Ollama: {e}")
+            raise RuntimeError("Modelo '{}' no descargado.".format(settings.OLLAMA_MODEL))
+        raise RuntimeError("Error Ollama: {}".format(e))
 
 
-def _openai(prompt: str) -> dict:
+def _llamar_openai(prompt: str) -> dict:
     try:
         import openai
     except ImportError:
-        raise RuntimeError("Librería 'openai' no instalada.")
+        raise RuntimeError("Libreria 'openai' no instalada.")
     if not settings.OPENAI_API_KEY:
         raise ValueError("OPENAI_API_KEY no configurada.")
     client = openai.OpenAI(api_key=settings.OPENAI_API_KEY)
@@ -160,10 +138,10 @@ def _openai(prompt: str) -> dict:
         temperature=0,
         response_format={"type": "json_object"},
     )
-    return _parsear_json(r.choices[0].message.content.strip())
+    return _parsear(r.choices[0].message.content.strip())
 
 
-def _parsear_json(texto: str) -> dict:
+def _parsear(texto: str) -> dict:
     texto = re.sub(r"```(?:json)?\s*", "", texto).strip().rstrip("`").strip()
     match = re.search(r'\{.*\}', texto, re.DOTALL)
     if match:
@@ -171,47 +149,50 @@ def _parsear_json(texto: str) -> dict:
     try:
         data = json.loads(texto)
     except json.JSONDecodeError as e:
-        logger.error(f"JSON inválido:\n{texto[:400]}")
-        raise ValueError(f"La IA no devolvió JSON válido: {e}")
+        logger.error("JSON invalido: %s | Texto: %s", e, texto[:300])
+        raise ValueError("La IA no devolvio JSON valido: {}".format(e))
 
-    if "puntaje_total" in data:
-        data["puntaje_total"] = max(0.0, min(100.0, float(data["puntaje_total"])))
-        if "criterios" not in data or not isinstance(data["criterios"], list):
-            raise ValueError("Falta 'criterios' como lista.")
-        if "resumen" not in data:
-            data["resumen"] = "Sin resumen disponible."
-        for c in data["criterios"]:
-            c["puntaje"] = max(0.0, min(100.0, float(c.get("puntaje", 0))))
-            c["cumple"] = c.get("cumple", "no").lower().strip()
-            if c["cumple"] not in ("si", "parcial", "no"):
-                c["cumple"] = "no"
+    if "puntaje_total" not in data:
+        raise ValueError("Falta puntaje_total en la respuesta.")
+    if "criterios" not in data or not isinstance(data["criterios"], list):
+        raise ValueError("Falta criterios como lista.")
+    if "resumen" not in data:
+        data["resumen"] = "Sin resumen disponible."
+
+    data["puntaje_total"] = max(0.0, min(100.0, float(data["puntaje_total"])))
+    for c in data["criterios"]:
+        c["puntaje"] = max(0.0, min(100.0, float(c.get("puntaje", 0))))
+        c["cumple"]  = c.get("cumple", "no").lower().strip()
+        if c["cumple"] not in ("si", "parcial", "no"):
+            c["cumple"] = "no"
+
+    for campo in ("nombre", "email", "telefono"):
+        v = data.get(campo)
+        if not v or str(v).lower() in ("null", "none", "n/a", "no encontrado", ""):
+            data[campo] = None
+        else:
+            data[campo] = str(v).strip()
+
     return data
 
 
-def _limpiar(v) -> str | None:
-    if not v or str(v).lower() in ("null", "none", "n/a", "no encontrado", ""):
-        return None
-    return str(v).strip()
-
-
 async def verificar_ollama() -> dict:
-    """Verifica Ollama (sigue siendo async para el endpoint FastAPI)."""
     try:
         import ollama
-        models = ollama.list()
+        models  = ollama.list()
         nombres = [m["name"] for m in models.get("models", [])]
-        base = settings.OLLAMA_MODEL.split(":")[0]
-        modelo_ok = any(base in n for n in nombres)
+        base    = settings.OLLAMA_MODEL.split(":")[0]
+        ok      = any(base in n for n in nombres)
         return {
-            "ollama_disponible": True,
-            "modelo_disponible": modelo_ok,
-            "modelo_requerido":  settings.OLLAMA_MODEL,
+            "ollama_disponible":  True,
+            "modelo_disponible":  ok,
+            "modelo_requerido":   settings.OLLAMA_MODEL,
             "modelos_instalados": nombres,
         }
     except Exception as e:
         return {
-            "ollama_disponible": False,
-            "modelo_disponible": False,
-            "modelo_requerido":  settings.OLLAMA_MODEL,
+            "ollama_disponible":  False,
+            "modelo_disponible":  False,
+            "modelo_requerido":   settings.OLLAMA_MODEL,
             "error": str(e),
         }

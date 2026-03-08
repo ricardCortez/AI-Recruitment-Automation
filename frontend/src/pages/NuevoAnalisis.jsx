@@ -2,41 +2,33 @@ import { useState, useCallback, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useDropzone } from 'react-dropzone'
 import { procesoService, cvsService } from '../services/procesoService'
+import { useAnalisis } from '../context/AnalisisContext'
 import AppLayout from '../components/layout/AppLayout'
 import { Card, CardTitle, Spinner } from '../components/ui/index.jsx'
 import toast from 'react-hot-toast'
 import api from '../services/api'
 
-// ── Barra de progreso con animación suave ─────────────────────────────────
 function ProgressBar({ value, cancelado }) {
   const [display, setDisplay] = useState(0)
   const prev = useRef(0)
-
   useEffect(() => {
     const target = value
     if (target <= prev.current) return
-    const steps = 25
-    const step  = (target - prev.current) / steps
+    const steps = 25, step = (target - prev.current) / steps
     let i = 0
     const iv = setInterval(() => {
       i++
-      const next = Math.min(prev.current + step * i, target)
-      setDisplay(next)
+      setDisplay(Math.min(prev.current + step * i, target))
       if (i >= steps) { prev.current = target; clearInterval(iv) }
     }, 25)
     return () => clearInterval(iv)
   }, [value])
-
   const color = cancelado ? '#F87171' : display >= 100 ? '#4ADE80' : '#22D3EE'
-
   return (
     <div className="w-full rounded-full overflow-hidden" style={{ height: 8, background: '#2A3A52' }}>
       <div className="h-full rounded-full"
-        style={{
-          width: `${display}%`, background: color,
-          boxShadow: display > 0 && display < 100 ? `0 0 10px ${color}60` : 'none',
-          transition: 'background 0.3s',
-        }} />
+        style={{ width: display + '%', background: color,
+                 boxShadow: display > 0 && display < 100 ? '0 0 10px ' + color + '60' : 'none' }} />
     </div>
   )
 }
@@ -45,17 +37,18 @@ function OllamaStatus({ status }) {
   if (!status) return null
   const ok = status.ollama_disponible && status.modelo_disponible
   return (
-    <div className="flex items-start gap-3 p-3 rounded-xl mb-5"
+    <div className="flex items-start gap-3 p-3 rounded-xl mb-4"
       style={{ background: ok ? 'rgba(74,222,128,0.06)' : 'rgba(248,113,113,0.06)',
-               border: `1px solid ${ok ? 'rgba(74,222,128,0.2)' : 'rgba(248,113,113,0.2)'}` }}>
+               border: '1px solid ' + (ok ? 'rgba(74,222,128,0.2)' : 'rgba(248,113,113,0.2)') }}>
       <span className="text-lg flex-shrink-0">{ok ? '🟢' : '🔴'}</span>
       <div>
         <div className="font-bold text-sm text-white">
-          {ok ? `Ollama listo · ${status.modelo_requerido}` : !status.ollama_disponible ? 'Ollama no disponible' : 'Modelo no descargado'}
+          {ok ? 'Ollama listo · ' + status.modelo_requerido
+              : !status.ollama_disponible ? 'Ollama no disponible' : 'Modelo no descargado'}
         </div>
         {!ok && (
           <code className="text-xs font-mono mt-1 text-slate-400 block">
-            {!status.ollama_disponible ? 'ollama serve' : `ollama pull ${status.modelo_requerido}`}
+            {!status.ollama_disponible ? 'ollama serve' : 'ollama pull ' + status.modelo_requerido}
           </code>
         )}
       </div>
@@ -63,19 +56,20 @@ function OllamaStatus({ status }) {
   )
 }
 
+function formatTiempo(s) {
+  if (!s) return '0:00'
+  const m = Math.floor(s / 60), seg = s % 60
+  return m + ':' + String(seg).padStart(2, '0')
+}
+
 export default function NuevoAnalisis() {
   const navigate = useNavigate()
+  const { analisisActivo, iniciarAnalisis, limpiarAnalisis } = useAnalisis()
 
-  const [form, setForm]           = useState({ nombre_puesto: '', requisitos: '' })
-  const [files, setFiles]         = useState([])
-  const [paso, setPaso]           = useState('form')
-  const [procesoId, setProcesoId] = useState(null)
+  const [form, setForm]     = useState({ nombre_puesto: '', requisitos: '' })
+  const [files, setFiles]   = useState([])
   const [cancelando, setCancelando] = useState(false)
   const [ollamaStatus, setOllamaStatus] = useState(null)
-  const [progreso, setProgreso]   = useState({
-    completado: 0, total: 0, progreso_global: 0,
-    log_actual: '', items: [], cancelado: false,
-  })
 
   useEffect(() => {
     api.get('/cvs/ollama/estado')
@@ -84,132 +78,79 @@ export default function NuevoAnalisis() {
   }, [])
 
   const onDrop = useCallback((accepted) => {
-    const nuevos = accepted.filter(f => !files.find(e => e.name === f.name))
-    setFiles(prev => [...prev, ...nuevos])
+    setFiles(prev => [...prev, ...accepted.filter(f => !prev.find(e => e.name === f.name))])
   }, [files])
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop, accept: { 'application/pdf': ['.pdf'] }, maxFiles: 20,
   })
 
-  const quitarArchivo = (name) => setFiles(prev => prev.filter(f => f.name !== name))
-
   const handleAnalizar = async () => {
     if (!form.nombre_puesto.trim()) return toast.error('Ingresá el nombre del puesto.')
     if (!form.requisitos.trim())    return toast.error('Ingresá los requisitos del puesto.')
     if (files.length === 0)         return toast.error('Agregá al menos un CV en PDF.')
-    if (ollamaStatus && !ollamaStatus.ollama_disponible)
-      return toast.error('Ollama no está corriendo. Ejecutá: ollama serve')
-    if (ollamaStatus && !ollamaStatus.modelo_disponible)
-      return toast.error(`Ejecutá: ollama pull ${ollamaStatus.modelo_requerido}`)
+    if (ollamaStatus && !ollamaStatus.ollama_disponible) return toast.error('Ollama no está corriendo.')
+    if (ollamaStatus && !ollamaStatus.modelo_disponible) return toast.error('Ejecutá: ollama pull ' + ollamaStatus.modelo_requerido)
 
     try {
-      setPaso('analizando')
-      setCancelando(false)
-      setProgreso({
-        completado: 0, total: files.length, progreso_global: 0,
-        log_actual: 'Preparando análisis...', cancelado: false,
-        items: files.map(f => ({ nombre: f.name, estado: 'pendiente' })),
-      })
-
       const { data: proceso } = await procesoService.crear(form)
-      setProcesoId(proceso.id)
-
       const fd = new FormData()
       files.forEach(f => fd.append('files', f))
       await cvsService.subirCVs(proceso.id, fd)
       await cvsService.analizar(proceso.id)
-      await pollEstado(proceso.id)
-
+      iniciarAnalisis(proceso.id, files)
     } catch (err) {
       toast.error(err.response?.data?.detail || err.message || 'Error al iniciar.')
-      setPaso('form')
     }
   }
 
   const handleCancelar = async () => {
-    if (!procesoId) return
+    if (!analisisActivo) return
     if (!confirm('¿Cancelar el análisis? Se detendrá al terminar el CV actual.')) return
     setCancelando(true)
     try {
-      await cvsService.cancelar(procesoId)
+      await cvsService.cancelar(analisisActivo.procesoId)
       toast('Cancelación solicitada...', { icon: '⛔' })
     } catch {
       toast.error('Error al cancelar.')
+    } finally {
       setCancelando(false)
     }
-  }
-
-  const pollEstado = async (id) => {
-    const MAX = 360
-    let intentos = 0
-
-    const check = async () => {
-      try {
-        const { data } = await cvsService.estado(id)
-
-        setProgreso(prev => ({
-          ...prev,
-          completado:      data.completado + data.error,
-          total:           data.total,
-          progreso_global: data.progreso_global,
-          log_actual:      data.log_actual || prev.log_actual,
-          cancelado:       data.cancelado || false,
-          items: prev.items.map((item, i) => ({
-            ...item,
-            estado: i < data.completado ? 'completado'
-                  : i < data.completado + data.error ? 'error'
-                  : data.procesando > 0 && i === data.completado + data.error ? 'procesando'
-                  : 'pendiente',
-          }))
-        }))
-
-        if (data.listo) {
-          setCancelando(false)
-          setPaso('listo')
-          return
-        }
-
-        intentos++
-        if (intentos < MAX) setTimeout(check, 2000)
-        else { setPaso('listo') }
-      } catch {
-        setTimeout(check, 3000)
-      }
-    }
-    await check()
   }
 
   const inputClass = "w-full px-4 py-3 rounded-xl text-white placeholder-slate-600 text-sm focus:outline-none"
   const inputStyle = { background: '#1A2235', border: '1.5px solid #2A3A52' }
 
-  // ── Vista: Procesando / Listo ─────────────────────────────────────────────
-  if (paso === 'analizando' || paso === 'listo') {
-    const { completado, total, progreso_global, log_actual, items, cancelado } = progreso
+  // ── Vista: Analizando o Listo (desde contexto global) ─────────────────────
+  if (analisisActivo) {
+    const { paso, progreso, procesoId } = analisisActivo
+    const { completado, total, progreso_global, log_actual, items, cancelado, tiempo_s } = progreso
 
     return (
       <AppLayout>
         <div className="p-8 max-w-2xl mx-auto">
 
-          {/* Header */}
           <div className="text-center mb-8">
             {paso === 'analizando' && !cancelado ? (
               <>
                 <div className="flex justify-center mb-5"><Spinner size={16} /></div>
                 <h2 className="text-2xl font-black text-white mb-2">Analizando CVs con IA local</h2>
-                <p className="text-slate-400 text-sm">Sin enviar datos a internet</p>
+                <p className="text-slate-400 text-sm">Sin enviar datos a internet · Podés navegar libremente</p>
               </>
-            ) : cancelado || (paso === 'listo' && items.some(i => i.estado === 'error')) ? (
+            ) : cancelado ? (
               <>
                 <div className="text-5xl mb-4">⛔</div>
                 <h2 className="text-2xl font-black text-white mb-2">Análisis cancelado</h2>
-                <p className="text-slate-400 text-sm">{completado} de {total} CVs procesados antes de cancelar.</p>
+                <p className="text-slate-400 text-sm">{completado} de {total} CVs procesados.</p>
               </>
             ) : (
               <>
                 <div className="text-5xl mb-4">✅</div>
                 <h2 className="text-2xl font-black text-white mb-2">¡Análisis completado!</h2>
-                <p className="text-slate-400 text-sm">Todos los CVs fueron procesados.</p>
+                <p className="text-slate-400 text-sm">
+                  {total} CVs procesados en{' '}
+                  <span className="font-bold text-white">{formatTiempo(tiempo_s)}</span>
+                </p>
               </>
             )}
           </div>
@@ -217,19 +158,27 @@ export default function NuevoAnalisis() {
           <Card className="mb-4">
             <div className="flex items-center justify-between mb-4">
               <CardTitle>📊 Progreso</CardTitle>
-              {/* Controles — solo visibles mientras corre */}
-              {paso === 'analizando' && !cancelado && (
-                <button onClick={handleCancelar} disabled={cancelando}
-                  className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold transition-all disabled:opacity-50"
-                  style={{ background: 'rgba(248,113,113,0.08)', color: '#F87171', border: '1px solid rgba(248,113,113,0.2)' }}
-                  onMouseEnter={e => !cancelando && (e.currentTarget.style.background = 'rgba(248,113,113,0.18)')}
-                  onMouseLeave={e => e.currentTarget.style.background = 'rgba(248,113,113,0.08)'}>
-                  {cancelando ? '⏳ Cancelando...' : '⛔ Cancelar'}
-                </button>
-              )}
+              <div className="flex items-center gap-3">
+                {/* Timer */}
+                <span className="text-xs font-mono px-2 py-1 rounded-lg"
+                  style={{ background: '#1A2235', color: '#22D3EE', border: '1px solid #2A3A52' }}>
+                  ⏱ {formatTiempo(tiempo_s)}
+                </span>
+                {/* Cancelar */}
+                {paso === 'analizando' && !cancelado && (
+                  <button onClick={handleCancelar} disabled={cancelando}
+                    className="px-3 py-1.5 rounded-lg text-xs font-bold transition-all disabled:opacity-50"
+                    style={{ background: 'rgba(248,113,113,0.08)', color: '#F87171',
+                             border: '1px solid rgba(248,113,113,0.2)' }}
+                    onMouseEnter={e => !cancelando && (e.currentTarget.style.background = 'rgba(248,113,113,0.18)')}
+                    onMouseLeave={e => e.currentTarget.style.background = 'rgba(248,113,113,0.08)'}>
+                    {cancelando ? '⏳ Cancelando...' : '⛔ Cancelar'}
+                  </button>
+                )}
+              </div>
             </div>
 
-            {/* Barra de progreso */}
+            {/* Barra */}
             <div className="mb-4">
               <div className="flex justify-between text-xs mb-2">
                 <span className="text-slate-400">{completado} de {total} CVs procesados</span>
@@ -240,16 +189,17 @@ export default function NuevoAnalisis() {
               <ProgressBar value={progreso_global} cancelado={cancelado} />
             </div>
 
-            {/* Log en tiempo real */}
+            {/* Log */}
             {log_actual && paso === 'analizando' && !cancelado && (
               <div className="flex items-center gap-3 px-4 py-2.5 rounded-xl mb-4"
                 style={{ background: 'rgba(34,211,238,0.05)', border: '1px solid rgba(34,211,238,0.12)' }}>
-                <span className="w-1.5 h-1.5 rounded-full flex-shrink-0 animate-pulse" style={{ background: '#22D3EE', minWidth: 6 }} />
-                <span className="text-xs font-mono text-cyan-300 leading-relaxed">{log_actual}</span>
+                <span className="w-1.5 h-1.5 rounded-full flex-shrink-0 animate-pulse"
+                  style={{ background: '#22D3EE', minWidth: 6 }} />
+                <span className="text-xs font-mono text-cyan-300">{log_actual}</span>
               </div>
             )}
 
-            {/* Lista de CVs */}
+            {/* Lista CVs */}
             <div className="space-y-2">
               {items.map((item, i) => {
                 const cfg = {
@@ -258,12 +208,11 @@ export default function NuevoAnalisis() {
                   procesando: { icon: '⟳', color: '#22D3EE', bg: 'rgba(34,211,238,0.08)', label: 'Procesando' },
                   pendiente:  { icon: '○', color: '#475569', bg: 'transparent',            label: 'En espera' },
                 }[item.estado]
-
                 return (
                   <div key={i} className="flex items-center gap-3 px-3 py-2.5 rounded-xl"
                     style={{ background: cfg.bg, border: '1px solid rgba(255,255,255,0.04)' }}>
                     <div className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0"
-                      style={{ background: `${cfg.color}18`, color: cfg.color }}>
+                      style={{ background: cfg.color + '18', color: cfg.color }}>
                       <span className={item.estado === 'procesando' ? 'animate-spin inline-block' : ''}>{cfg.icon}</span>
                     </div>
                     <div className="flex-1 min-w-0">
@@ -279,11 +228,10 @@ export default function NuevoAnalisis() {
             </div>
           </Card>
 
-          {/* Botones finales */}
           {paso === 'listo' && (
             <div className="flex gap-3">
               {completado > 0 && (
-                <button onClick={() => navigate(`/resultados/${procesoId}`)}
+                <button onClick={() => { limpiarAnalisis(); navigate('/resultados/' + procesoId) }}
                   className="flex-1 py-3.5 rounded-xl font-black text-sm transition-all"
                   style={{ background: 'linear-gradient(135deg, #22D3EE, #06B6D4)', color: '#0A0F1A' }}
                   onMouseEnter={e => e.currentTarget.style.filter = 'brightness(1.08)'}
@@ -291,7 +239,7 @@ export default function NuevoAnalisis() {
                   Ver {completado} resultado{completado !== 1 ? 's' : ''} →
                 </button>
               )}
-              <button onClick={() => { setFiles([]); setPaso('form') }}
+              <button onClick={() => { limpiarAnalisis(); setFiles([]) }}
                 className="px-5 py-3.5 rounded-xl font-bold text-sm transition-all"
                 style={{ background: '#1A2235', color: '#94A3B8', border: '1px solid #2A3A52' }}
                 onMouseEnter={e => e.currentTarget.style.borderColor = '#22D3EE'}
@@ -355,7 +303,7 @@ export default function NuevoAnalisis() {
             <Card className="flex-1">
               <CardTitle>📎 CVs en PDF ({files.length})</CardTitle>
               <div {...getRootProps()} className="rounded-xl p-8 text-center cursor-pointer transition-all mb-4"
-                style={{ border: `2px dashed ${isDragActive ? '#22D3EE' : '#2A3A52'}`,
+                style={{ border: '2px dashed ' + (isDragActive ? '#22D3EE' : '#2A3A52'),
                          background: isDragActive ? 'rgba(34,211,238,0.04)' : 'transparent' }}>
                 <input {...getInputProps()} />
                 <div className="text-4xl mb-3">{isDragActive ? '📂' : '📁'}</div>
@@ -375,7 +323,7 @@ export default function NuevoAnalisis() {
                         <div className="text-xs font-medium text-white truncate">{f.name}</div>
                         <div className="text-xs text-slate-500">{(f.size / 1024).toFixed(0)} KB</div>
                       </div>
-                      <button onClick={() => quitarArchivo(f.name)}
+                      <button onClick={() => setFiles(prev => prev.filter(x => x.name !== f.name))}
                         className="text-slate-600 hover:text-red-400 transition-all text-sm px-1">✕</button>
                     </div>
                   ))}
@@ -389,7 +337,7 @@ export default function NuevoAnalisis() {
               style={{ background: 'linear-gradient(135deg, #22D3EE, #06B6D4)', color: '#0A0F1A' }}
               onMouseEnter={e => !e.currentTarget.disabled && (e.currentTarget.style.filter = 'brightness(1.08)')}
               onMouseLeave={e => e.currentTarget.style.filter = ''}>
-              🔍 Analizar {files.length > 0 ? `${files.length} CV${files.length !== 1 ? 's' : ''}` : 'CVs'} con IA Local
+              🔍 Analizar {files.length > 0 ? files.length + ' CV' + (files.length !== 1 ? 's' : '') : 'CVs'} con IA Local
             </button>
           </div>
         </div>

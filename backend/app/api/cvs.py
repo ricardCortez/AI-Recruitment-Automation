@@ -18,30 +18,48 @@ from app.schemas.proceso import CandidatoOut
 
 router = APIRouter()
 
+# Tiempo de inicio por proceso_id
+_inicio_analisis: dict[int, float] = {}
 
-# ── Ruta fija ANTES de /{proceso_id}/... ────────────────────────────────────
+
+# -- Ruta fija ANTES de /{proceso_id}/... ------------------------------------
 @router.get("/ollama/estado")
 async def estado_ollama(_: User = Depends(require_reclutador_or_admin)):
     from app.services.ia_service import verificar_ollama
     return await verificar_ollama()
 
 
-# ── Background task con sesión propia ────────────────────────────────────────
-def analizar_en_background(proceso_id: int):
-    """Background task — síncrono, sin asyncio.run()."""
+# -- Background task en thread separado con prioridad reducida ---------------
+def _worker(proceso_id: int):
+    """Corre en thread separado. Prioridad reducida para no congelar el sistema."""
+    import threading
+    # Bajar prioridad del thread en Windows
+    try:
+        import ctypes
+        ctypes.windll.kernel32.SetThreadPriority(
+            ctypes.windll.kernel32.GetCurrentThread(), -1)  # THREAD_PRIORITY_BELOW_NORMAL
+    except Exception:
+        pass
+
     db = SessionLocal()
     try:
         analizar_proceso(proceso_id, db)
     except Exception as e:
         import traceback
         from app.utils.logger import get_logger
-        get_logger(__name__).error(f"Error crítico en background task: {e}
-{traceback.format_exc()}")
+        tb = traceback.format_exc()
+        get_logger(__name__).error("Error en worker proceso %s: %s | %s", proceso_id, e, tb)
     finally:
         db.close()
 
 
-# ── Upload CVs ────────────────────────────────────────────────────────────────
+def analizar_en_background(proceso_id: int):
+    import threading
+    t = threading.Thread(target=_worker, args=(proceso_id,), daemon=True)
+    t.start()
+
+
+# -- Upload CVs --------------------------------------------------------------
 @router.post("/{proceso_id}/upload", response_model=list[CandidatoOut])
 async def subir_cvs(
     proceso_id: int,
@@ -69,7 +87,7 @@ async def subir_cvs(
     return creados
 
 
-# ── Disparar análisis ─────────────────────────────────────────────────────────
+# -- Disparar analisis -------------------------------------------------------
 @router.post("/{proceso_id}/analizar")
 async def analizar(
     proceso_id: int,
@@ -85,28 +103,29 @@ async def analizar(
     if total == 0:
         raise HTTPException(status_code=400, detail="No hay CVs cargados.")
 
+    import time
+    _inicio_analisis[proceso_id] = time.time()
     background_tasks.add_task(analizar_en_background, proceso_id)
-    return {"mensaje": f"Análisis iniciado para {total} CV{'s' if total != 1 else ''}.", "total": total}
+    label = "CVs" if total != 1 else "CV"
+    return {"mensaje": "Analisis iniciado para {} {}.".format(total, label), "total": total}
 
 
-# ── Cancelar análisis ────────────────────────────────────────────────────────
+# -- Cancelar analisis -------------------------------------------------------
 @router.post("/{proceso_id}/cancelar")
 def cancelar_analisis(
     proceso_id: int,
     _: User = Depends(require_reclutador_or_admin),
     db: Session = Depends(get_db),
 ):
-    from app.models.analisis import Analisis, EstadoAnalisis
-
     proceso = db.query(Proceso).filter(Proceso.id == proceso_id).first()
     if not proceso:
         raise HTTPException(status_code=404, detail="Proceso no encontrado.")
 
     solicitar_cancelacion(proceso_id)
-    return {"mensaje": "Cancelación solicitada. Se detendrá al terminar el CV actual."}
+    return {"mensaje": "Cancelacion solicitada. Se detendra al terminar el CV actual."}
 
 
-# ── Estado con progreso granular ──────────────────────────────────────────────
+# -- Estado con progreso granular --------------------------------------------
 @router.get("/{proceso_id}/estado")
 def estado_analisis(
     proceso_id: int,
@@ -123,8 +142,8 @@ def estado_analisis(
         "total": total,
         "pendiente": 0, "procesando": 0, "completado": 0, "error": 0,
         "log_actual": "",
-        "sub_pct": 0,          # Progreso dentro del CV actual (0-100)
-        "progreso_global": 0,  # Progreso total incluyendo sub-pasos (0-100)
+        "sub_pct": 0,
+        "progreso_global": 0,
     }
 
     completados = 0
@@ -140,9 +159,8 @@ def estado_analisis(
             if an.estado == EstadoAnalisis.COMPLETADO:
                 completados += 1
             elif an.estado == EstadoAnalisis.ERROR:
-                completados += 1  # Contar errores como "procesados" para la barra
+                completados += 1
             elif an.estado == EstadoAnalisis.PROCESANDO and an.error_msg:
-                # Parsear [PROG:45] Mensaje
                 match = re.match(r'\[PROG:(\d+)\]\s*(.*)', an.error_msg)
                 if match:
                     sub_pct    = int(match.group(1))
@@ -151,20 +169,24 @@ def estado_analisis(
     estados["log_actual"] = log_actual
     estados["sub_pct"]    = sub_pct
 
-    # Progreso global: CVs completados + fracción del CV actual
     if total > 0:
         estados["progreso_global"] = int((completados * 100 + sub_pct) / total)
 
-    estados["listo"] = total > 0 and (estados["completado"] + estados["error"]) == total
-
-    # Detectar si fue cancelado (algún error_msg dice "cancelado")
-    from app.services.analisis_service import cancelacion_activa
+    estados["listo"]    = total > 0 and (estados["completado"] + estados["error"]) == total
     estados["cancelado"] = cancelacion_activa(proceso_id)
+
+    # Tiempo transcurrido
+    import time
+    inicio = _inicio_analisis.get(proceso_id)
+    if inicio:
+        estados["tiempo_transcurrido_s"] = int(time.time() - inicio)
+    else:
+        estados["tiempo_transcurrido_s"] = 0
 
     return estados
 
 
-# ── Eliminar candidato ────────────────────────────────────────────────────────
+# -- Eliminar candidato ------------------------------------------------------
 @router.delete("/{proceso_id}/candidatos/{candidato_id}")
 def eliminar_candidato(
     proceso_id: int,

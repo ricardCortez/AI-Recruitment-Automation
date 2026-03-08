@@ -13,10 +13,12 @@ import Usuarios        from './pages/Usuarios'
 import CrearUsuario    from './pages/CrearUsuario'
 import Perfil          from './pages/Perfil'
 import Configuracion   from './pages/Configuracion'
+import { AnalisisProvider } from './context/AnalisisContext'
 
 export default function App() {
   return (
     <AuthProvider>
+      <AnalisisProvider>
       <BrowserRouter>
         <Toaster
           position="top-right"
@@ -48,6 +50,7 @@ export default function App() {
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>
       </BrowserRouter>
+      </AnalisisProvider>
     </AuthProvider>
   )
 }
