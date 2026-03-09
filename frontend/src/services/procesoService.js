@@ -19,7 +19,8 @@ export const cvsService = {
     api.post(`/cvs/${procesoId}/upload`, formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     }),
-  analizar:  (procesoId) => api.post(`/cvs/${procesoId}/analizar`),
+  analizar: (procesoId, forzar = false) =>
+  api.post(`/cvs/${procesoId}/analizar?forzar=${forzar}`),
   cancelar:  (procesoId) => api.post(`/cvs/${procesoId}/cancelar`),
   estado:    (procesoId) => api.get(`/cvs/${procesoId}/estado`),
 }

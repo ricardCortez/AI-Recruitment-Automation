@@ -231,7 +231,7 @@ export default function Configuracion() {
     api.get('/config/')
       .then(r => {
         setData(prev => prev
-          ? { ...prev, gpu: r.data.gpu, ram: r.data.ram,
+          ? { ...prev, gpu: r.data.gpu, ram: r.data.ram, cpu: r.data.cpu,
               ram_suficiente: r.data.ram_suficiente,
               vram_suficiente: r.data.vram_suficiente }
           : r.data)
@@ -287,7 +287,8 @@ export default function Configuracion() {
     </AppLayout>
   )
 
-  const { gpu, ram, ram_suficiente } = data
+  const { gpu, ram, ram_suficiente, cpu } = data
+  const cpuInfo = cpu || { logicos: 4, fisicos: 2, optimo: 2 }
   const ramUsada = ram.total_gb - ram.disponible_gb
 
   return (
@@ -311,6 +312,31 @@ export default function Configuracion() {
 
           {/* ── Columna izquierda: Hardware ──────────────────────────────── */}
           <div className="space-y-4">
+
+            {/* CPU */}
+            <Card>
+              <CardTitle>🖥️ Procesador (CPU)</CardTitle>
+              <div className="grid grid-cols-3 gap-3 mb-3">
+                {[
+                  { label: 'Núcleos físicos',  value: cpuInfo.fisicos,  color: '#22D3EE' },
+                  { label: 'Hilos lógicos',    value: cpuInfo.logicos,  color: '#A78BFA' },
+                  { label: 'Hilos óptimos',    value: cpuInfo.optimo,   color: '#4ADE80' },
+                ].map(s => (
+                  <div key={s.label} className="p-3 rounded-xl text-center"
+                    style={{ background: '#1A2235', border: '1px solid #2A3A52' }}>
+                    <div className="text-2xl font-black font-mono" style={{ color: s.color }}>{s.value}</div>
+                    <div className="text-xs text-slate-500 mt-0.5 leading-tight">{s.label}</div>
+                  </div>
+                ))}
+              </div>
+              <div className="flex items-center gap-2 p-2 rounded-lg"
+                style={{ background: 'rgba(74,222,128,0.05)', border: '1px solid rgba(74,222,128,0.15)' }}>
+                <span className="text-sm">✅</span>
+                <span className="text-xs text-slate-400">
+                  Configuración auto-detectada: usando <strong className="text-white">{cpuInfo.optimo} hilos</strong> de {cpuInfo.logicos} disponibles
+                </span>
+              </div>
+            </Card>
 
             {/* RAM */}
             <Card>
@@ -394,13 +420,20 @@ export default function Configuracion() {
                   <label className="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">
                     Threads CPU: {config.num_threads}
                   </label>
-                  <input type="range" min={1} max={16} step={1}
+                  <input type="range" min={1} max={cpuInfo.logicos} step={1}
                     value={config.num_threads}
                     onChange={e => setConfig(c => ({ ...c, num_threads: parseInt(e.target.value) }))}
                     className="w-full accent-cyan-400" />
                   <div className="flex justify-between text-xs text-slate-600 mt-1">
-                    <span>1 (lento)</span><span>8</span><span>16 (máx)</span>
+                    <span>1 (mínimo)</span>
+                    <span className="text-cyan-600">{cpuInfo.optimo} (óptimo)</span>
+                    <span>{cpuInfo.logicos} (máx)</span>
                   </div>
+                  {config.num_threads < cpuInfo.optimo && (
+                    <div className="text-xs text-yellow-400 mt-1.5 flex items-center gap-1">
+                      ⚠️ Usando menos hilos que el óptimo detectado ({cpuInfo.optimo})
+                    </div>
+                  )}
                 </div>
               )}
             </Card>
@@ -412,7 +445,8 @@ export default function Configuracion() {
                 {[
                   { label: 'Modelo',        value: config?.modelo },
                   { label: 'Dispositivo',   value: config?.dispositivo?.toUpperCase() },
-                  { label: 'Threads CPU',   value: config?.dispositivo === 'cpu' ? config?.num_threads : '—' },
+                  { label: 'Threads CPU',   value: config?.dispositivo === 'cpu' ? `${config?.num_threads} / ${cpuInfo.logicos}` : '—' },
+                  { label: 'Núcleos físicos', value: `${cpuInfo.fisicos} cores` },
                   { label: 'RAM disponible', value: `${ram.disponible_gb?.toFixed(1)} GB` },
                 ].map(item => (
                   <div key={item.label} className="flex justify-between items-center py-1.5"

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { procesoService, reportesService } from '../services/procesoService'
+import { procesoService, cvsService, reportesService } from '../services/procesoService'
+import { useAnalisis } from '../context/AnalisisContext'
 import AppLayout from '../components/layout/AppLayout'
 import { Card, ScoreBar, ScoreNumber, Spinner, EmptyState } from '../components/ui/index.jsx'
 import toast from 'react-hot-toast'
@@ -11,11 +12,13 @@ const BORDER_LEFT = ['#FACC15', '#94A3B8', '#CD7F32']
 export default function Resultados() {
   const { procesoId } = useParams()
   const navigate = useNavigate()
+  const { iniciarAnalisis } = useAnalisis()
 
-  const [proceso, setProceso]   = useState(null)
-  const [ranking, setRanking]   = useState([])
-  const [loading, setLoading]   = useState(true)
-  const [exporting, setExport]  = useState(false)
+  const [proceso, setProceso]     = useState(null)
+  const [ranking, setRanking]     = useState([])
+  const [loading, setLoading]     = useState(true)
+  const [exporting, setExport]    = useState(false)
+  const [reanaliz, setReanaliz]   = useState(false)
 
   useEffect(() => {
     const cargar = async () => {
@@ -53,6 +56,23 @@ export default function Resultados() {
     }
   }
 
+  const handleReanalizar = async () => {
+    if (!confirm(`¿Re-analizar todos los CVs del proceso "${proceso?.nombre_puesto}"?\n\nEsto sobreescribirá los resultados actuales con el nuevo modelo de evaluación.`)) return
+    setReanaliz(true)
+    try {
+      await cvsService.analizar(procesoId, true)
+      // Crear items mock para el contexto (nombre de cada candidato)
+      const items = ranking.map(item => ({
+        name: item.candidato.nombre || `CV #${item.candidato.id}`
+      }))
+      iniciarAnalisis(Number(procesoId), items)
+      navigate('/nuevo-analisis')
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Error al iniciar re-análisis.')
+      setReanaliz(false)
+    }
+  }
+
   if (loading) return (
     <AppLayout>
       <div className="flex justify-center items-center h-full py-32">
@@ -77,13 +97,28 @@ export default function Resultados() {
               {ranking.length} candidato{ranking.length !== 1 ? 's' : ''} · Ordenados por compatibilidad
             </p>
           </div>
-          <button onClick={handleExport} disabled={exporting}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold transition-all disabled:opacity-60"
-            style={{ border: '1.5px solid #22D3EE', background: 'rgba(34,211,238,0.08)', color: '#22D3EE' }}
-            onMouseEnter={e => e.currentTarget.style.background = 'rgba(34,211,238,0.15)'}
-            onMouseLeave={e => e.currentTarget.style.background = 'rgba(34,211,238,0.08)'}>
-            {exporting ? <Spinner size={4} /> : '📥'} Exportar Excel
-          </button>
+
+          {/* Botones */}
+          <div className="flex gap-3 flex-wrap">
+            {/* Re-analizar */}
+            {ranking.length > 0 && (
+              <button onClick={handleReanalizar} disabled={reanaliz}
+                className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold transition-all disabled:opacity-60"
+                style={{ border: '1.5px solid rgba(250,204,21,0.4)', background: 'rgba(250,204,21,0.06)', color: '#FACC15' }}
+                onMouseEnter={e => !reanaliz && (e.currentTarget.style.background = 'rgba(250,204,21,0.12)')}
+                onMouseLeave={e => e.currentTarget.style.background = 'rgba(250,204,21,0.06)'}>
+                {reanaliz ? <Spinner size={4} /> : '🔄'} Re-analizar
+              </button>
+            )}
+            {/* Exportar */}
+            <button onClick={handleExport} disabled={exporting}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold transition-all disabled:opacity-60"
+              style={{ border: '1.5px solid #22D3EE', background: 'rgba(34,211,238,0.08)', color: '#22D3EE' }}
+              onMouseEnter={e => e.currentTarget.style.background = 'rgba(34,211,238,0.15)'}
+              onMouseLeave={e => e.currentTarget.style.background = 'rgba(34,211,238,0.08)'}>
+              {exporting ? <Spinner size={4} /> : '📥'} Exportar Excel
+            </button>
+          </div>
         </div>
 
         {/* Ranking */}

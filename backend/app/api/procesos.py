@@ -5,6 +5,7 @@ Incluye: estado del analisis, tiempo total, fecha/hora local.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from app.db.database import get_db
@@ -169,7 +170,7 @@ def eliminar_proceso(
     db.commit()
 
 
-@router.get("/{proceso_id}/ranking", response_model=RankingResponse)
+@router.get("/{proceso_id}/ranking")
 def ranking_proceso(
     proceso_id: int,
     _: User = Depends(get_current_user),
@@ -179,9 +180,9 @@ def ranking_proceso(
     if not proceso:
         raise HTTPException(status_code=404, detail="Proceso no encontrado.")
     items = obtener_ranking(proceso_id, db)
-    return RankingResponse(
-        proceso_id    = proceso_id,
-        nombre_puesto = proceso.nombre_puesto,
-        total         = len(items),
-        items         = items,
-    )
+    return JSONResponse(content={
+        "proceso_id":    proceso_id,
+        "nombre_puesto": proceso.nombre_puesto,
+        "total":         len(items),
+        "items":         items,
+    })
