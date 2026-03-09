@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from typing import Optional
 
-from app.core.dependencies import require_admin, require_reclutador_or_admin
+from app.core.dependencies import require_admin, require_reclutador_or_admin, get_current_user
 from app.models.user import User
 from app.utils.logger import get_logger
 
@@ -143,7 +143,7 @@ def detectar_ram() -> dict:
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @router.get("/")
-def obtener_config(_: User = Depends(require_admin)):
+def obtener_config(current_user: User = Depends(get_current_user)):
     cfg = leer_config()
     gpu = detectar_gpu()
     ram = detectar_ram()
@@ -190,6 +190,7 @@ def obtener_config(_: User = Depends(require_admin)):
             len(gpu["gpus"]) > 0 and
             gpu["gpus"][0]["vram_libre"] >= req_actual["vram_gb"] * 1024 * 0.8
         ),
+        "user_rol": current_user.rol,
     }
 
 
@@ -202,9 +203,17 @@ class ConfigUpdate(BaseModel):
 
 
 @router.post("/")
-def actualizar_config(data: ConfigUpdate, _: User = Depends(require_admin)):
+def actualizar_config(data: ConfigUpdate, current_user: User = Depends(get_current_user)):
     cfg = leer_config()
     update = data.model_dump(exclude_none=True)
+
+    # Solo superadmin puede cambiar configuración avanzada
+    es_superadmin = current_user.rol == "admin"
+    CAMPOS_AVANZADOS = {"num_threads", "max_tokens", "temperature", "seed", "num_gpu"}
+    if not es_superadmin:
+        # Filtrar solo modelo y dispositivo
+        update = {k: v for k, v in update.items() if k not in CAMPOS_AVANZADOS}
+
     cfg.update(update)
 
     # Sincronizar num_gpu según dispositivo

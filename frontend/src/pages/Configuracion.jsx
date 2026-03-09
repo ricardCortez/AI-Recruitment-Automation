@@ -212,6 +212,7 @@ export default function Configuracion() {
   const [diag, setDiag]       = useState(null)
   const [diagLoading, setDiagLoading] = useState(false)
   const [modelosInstalados, setModelosInstalados] = useState([])
+  const [userRol, setUserRol] = useState('')
 
   const pollingRef = useRef(null)
 
@@ -221,6 +222,7 @@ export default function Configuracion() {
         setData(r.data)
         setConfig(r.data.config)
         setModelosInstalados(r.data.modelos_instalados || [])
+        if (r.data.user_rol) setUserRol(r.data.user_rol)
       })
       .catch(() => toast.error('Error cargando configuración.'))
       .finally(() => setLoading(false))
@@ -290,6 +292,119 @@ export default function Configuracion() {
   const { gpu, ram, ram_suficiente, cpu } = data
   const cpuInfo = cpu || { logicos: 4, fisicos: 2, optimo: 2 }
   const ramUsada = ram.total_gb - ram.disponible_gb
+  const esSuperAdmin = userRol === 'admin'
+
+  // ── Vista simplificada para roles no-superadmin ─────────────────────────────
+  if (!esSuperAdmin) {
+    return (
+      <AppLayout>
+        <div className="p-8 max-w-2xl">
+          <div className="flex items-start justify-between mb-8 flex-wrap gap-4">
+            <div>
+              <h1 className="text-3xl font-black text-white tracking-tight">Configuración de IA</h1>
+              <p className="text-slate-400 mt-1">Elegí el modelo y tipo de procesamiento</p>
+            </div>
+            <button onClick={guardar} disabled={saving}
+              className="px-5 py-2.5 rounded-xl font-bold text-sm disabled:opacity-60 transition-all"
+              style={{ background: '#22D3EE', color: '#0A0F1A' }}
+              onMouseEnter={e => !saving && (e.currentTarget.style.filter = 'brightness(1.08)')}
+              onMouseLeave={e => e.currentTarget.style.filter = ''}>
+              {saving ? 'Guardando...' : '💾 Guardar'}
+            </button>
+          </div>
+
+          <div className="space-y-5">
+
+            {/* Selector de procesamiento */}
+            <Card>
+              <CardTitle>🔧 Procesamiento</CardTitle>
+              <div className="grid grid-cols-2 gap-3">
+                {[
+                  { id: 'cpu', icon: '🖥️', label: 'CPU', desc: 'Compatible con todo equipo' },
+                  { id: 'gpu', icon: '⚡', label: 'GPU', desc: 'Más rápido si tenés NVIDIA', disabled: !gpu.disponible },
+                ].map(op => (
+                  <button key={op.id}
+                    disabled={op.disabled}
+                    onClick={() => !op.disabled && setDispositivo(op.id)}
+                    className="p-4 rounded-xl text-left transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                    style={{
+                      background: config?.dispositivo === op.id ? 'rgba(34,211,238,0.1)' : '#1A2235',
+                      border: `1.5px solid ${config?.dispositivo === op.id ? '#22D3EE' : '#2A3A52'}`,
+                    }}>
+                    <div className="text-2xl mb-2">{op.icon}</div>
+                    <div className="font-bold text-white text-sm">{op.label}</div>
+                    <div className="text-xs text-slate-500 mt-0.5">{op.desc}</div>
+                    {op.disabled && <div className="text-xs text-red-400 mt-1">No disponible</div>}
+                  </button>
+                ))}
+              </div>
+            </Card>
+
+            {/* Selector de modelo */}
+            <Card>
+              <CardTitle>🧠 Modelo de IA</CardTitle>
+              <div className="space-y-3">
+                {MODELOS.map(m => {
+                  const activo    = config?.modelo === m.id
+                  const instalado = modelosInstalados.some(n =>
+                    n.toLowerCase().startsWith(m.id.split(':')[0].toLowerCase())
+                  )
+                  return (
+                    <button key={m.id}
+                      onClick={() => setModelo(m.id)}
+                      className="w-full p-4 rounded-xl text-left transition-all"
+                      style={{
+                        background: activo ? `${m.tagColor}0D` : '#1A2235',
+                        border: `1.5px solid ${activo ? m.tagColor : '#2A3A52'}`,
+                      }}>
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-bold text-white text-sm">{m.label}</span>
+                          <span className="text-xs px-2 py-0.5 rounded-full font-bold"
+                            style={{ background: m.tagColor + '18', color: m.tagColor }}>
+                            {m.tag}
+                          </span>
+                          {activo && (
+                            <span className="text-xs px-2 py-0.5 rounded-full font-bold"
+                              style={{ background: 'rgba(255,255,255,0.07)', color: '#fff' }}>
+                              ✓ Activo
+                            </span>
+                          )}
+                        </div>
+                        <span className="text-xs font-semibold flex-shrink-0"
+                          style={{ color: instalado ? '#4ADE80' : '#94A3B8' }}>
+                          {instalado ? '● Instalado' : '○ No instalado'}
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-400 mt-2 leading-relaxed">{m.desc}</p>
+                    </button>
+                  )
+                })}
+              </div>
+            </Card>
+
+            {/* Resumen */}
+            <Card style={{ background: 'rgba(34,211,238,0.03)', border: '1px solid rgba(34,211,238,0.15)' }}>
+              <CardTitle>📋 Configuración activa</CardTitle>
+              <div className="space-y-2">
+                {[
+                  { label: 'Modelo',      value: config?.modelo },
+                  { label: 'Dispositivo', value: config?.dispositivo?.toUpperCase() },
+                ].map(item => (
+                  <div key={item.label} className="flex justify-between items-center py-1.5"
+                    style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                    <span className="text-xs text-slate-500">{item.label}</span>
+                    <span className="text-xs font-mono font-bold text-white">{item.value}</span>
+                  </div>
+                ))}
+              </div>
+            </Card>
+
+          </div>
+        </div>
+      </AppLayout>
+    )
+  }
 
   return (
     <AppLayout>
