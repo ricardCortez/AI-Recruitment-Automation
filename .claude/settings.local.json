@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(venvScriptspython.exe -c \"import pdfplumber; print\\(''pdfplumber OK''\\)\")",
+      "Bash(venvScriptspython.exe -c \"import PyPDF2; print\\(''PyPDF2 OK''\\)\")",
+      "Bash(venvScriptspython.exe -c \"import pymupdf; print\\(''pymupdf OK''\\)\")",
+      "Bash(venvScriptspython.exe -c \"import fitz; print\\(''fitz OK''\\)\")",
+      "Bash(./venv/Scripts/python.exe -c \"import pdfplumber; print\\(''pdfplumber OK''\\)\")",
+      "Bash(./venv/Scripts/python.exe -c \"import PyPDF2; print\\(''PyPDF2 OK''\\)\")",
+      "Bash(./venv/Scripts/python.exe -c \"import fitz; print\\(''fitz/pymupdf OK''\\)\")",
+      "Bash(./venv/Scripts/python.exe -c \"import main\")",
+      "Bash(./venv/Scripts/python.exe -m uvicorn main:app --host 127.0.0.1 --port 8000)"
+    ]
+  }
+}

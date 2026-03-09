@@ -27,7 +27,8 @@ class Analisis(Base):
     detalle_json    = Column(JSON, nullable=True)            # Lista de criterios evaluados
     resumen_ia      = Column(Text, nullable=True)            # Texto generado por la IA
     proveedor_ia    = Column(String(50), nullable=True)      # "ollama" | "openai"
-    error_msg       = Column(Text, nullable=True)
+    error_msg       = Column(Text, nullable=True)            # Error real al fallar
+    progress_msg    = Column(Text, nullable=True)            # Progreso durante procesamiento "[PROG:50] ..."
     procesado_en    = Column(DateTime, nullable=True)
     creado_en       = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 

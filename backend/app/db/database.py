@@ -2,7 +2,7 @@
 Conexión a la base de datos SQLite y gestión de sesiones.
 """
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, DeclarativeBase
 
 from app.core.config import settings
@@ -21,10 +21,31 @@ class Base(DeclarativeBase):
     pass
 
 
+def _aplicar_migraciones():
+    """Aplica columnas nuevas a tablas existentes (SQLite no soporta ALTER TABLE automático)."""
+    migraciones = [
+        # Crítico 3: Separar progress_msg de error_msg en analisis
+        "ALTER TABLE analisis ADD COLUMN progress_msg TEXT",
+        # Crítico 5: Persistir tiempo de análisis en proceso (sobrevive reinicios del servidor)
+        "ALTER TABLE procesos ADD COLUMN tiempo_analisis_s INTEGER",
+        "ALTER TABLE procesos ADD COLUMN inicio_analisis DATETIME",
+        # Bajo 24: Índice en creado_en para ORDER BY DESC eficiente
+        "CREATE INDEX IF NOT EXISTS ix_procesos_creado_en ON procesos (creado_en)",
+    ]
+    with engine.connect() as conn:
+        for sql in migraciones:
+            try:
+                conn.execute(text(sql))
+                conn.commit()
+            except Exception:
+                pass  # Columna ya existe — ignorar
+
+
 def create_tables():
-    """Crea todas las tablas si no existen."""
+    """Crea todas las tablas si no existen y aplica migraciones incrementales."""
     from app.models import user, proceso, candidato, analisis  # noqa: F401
     Base.metadata.create_all(bind=engine)
+    _aplicar_migraciones()
 
 
 def get_db():

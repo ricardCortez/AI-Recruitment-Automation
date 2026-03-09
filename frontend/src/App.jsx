@@ -17,9 +17,9 @@ import { AnalisisProvider } from './context/AnalisisContext'
 
 export default function App() {
   return (
+    <BrowserRouter>
     <AuthProvider>
       <AnalisisProvider>
-      <BrowserRouter>
         <Toaster
           position="top-right"
           toastOptions={{
@@ -49,8 +49,8 @@ export default function App() {
           {/* Fallback */}
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>
-      </BrowserRouter>
       </AnalisisProvider>
     </AuthProvider>
+    </BrowserRouter>
   )
 }

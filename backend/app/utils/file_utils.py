@@ -41,5 +41,11 @@ async def guardar_archivo(file: UploadFile, destino: Path) -> int:
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail=f"El archivo supera el límite de {settings.MAX_FILE_SIZE_MB} MB.",
         )
+    # Validar magic bytes: un PDF real comienza con "%PDF" (no solo por extensión)
+    if not contenido.startswith(b"%PDF"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"'{file.filename}' no es un PDF válido. Verificá que el archivo no esté corrupto.",
+        )
     destino.write_bytes(contenido)
     return len(contenido)

@@ -3,6 +3,7 @@ Sistema CV — Punto de entrada principal del backend.
 """
 
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
@@ -29,6 +30,18 @@ async def lifespan(app: FastAPI):
     logger.info("Apagando servidor.")
 
 
+class _UTCResponse(JSONResponse):
+    """Serializa datetimes con sufijo Z para que el navegador los convierta a hora local."""
+    def render(self, content) -> bytes:
+        import json
+        from datetime import datetime
+        def _enc(obj):
+            if isinstance(obj, datetime):
+                s = obj.isoformat()
+                return s if (s.endswith("Z") or "+" in s) else s + "Z"
+            raise TypeError(repr(obj))
+        return json.dumps(content, default=_enc, ensure_ascii=False).encode("utf-8")
+
 app = FastAPI(
     title=settings.APP_NAME,
     version=settings.APP_VERSION,
@@ -36,6 +49,7 @@ app = FastAPI(
     docs_url="/docs" if settings.ENVIRONMENT == "development" else None,
     redoc_url=None,
     lifespan=lifespan,
+    default_response_class=_UTCResponse,
 )
 
 # ── CORS ─────────────────────────────────────────────────────────────────────

@@ -1,8 +1,10 @@
+# -*- coding: utf-8 -*-
 """
 Servicio de analisis - SINCRONO.
 Usa analizar_cv_completo() que hace una sola llamada a Ollama por CV.
 """
 
+import time
 import traceback
 from datetime import datetime, timezone
 from pathlib import Path
@@ -34,7 +36,8 @@ def limpiar_cancelacion(proceso_id: int):
 
 def _prog(analisis: Analisis, db: Session, pct: int, mensaje: str):
     try:
-        analisis.error_msg = "[PROG:{}] {}".format(pct, mensaje)
+        # Usar progress_msg separado de error_msg para evitar race condition
+        analisis.progress_msg = "[PROG:{}] {}".format(pct, mensaje)
         db.commit()
         logger.info("  [%s%%] %s", pct, mensaje)
     except Exception as e:
@@ -46,7 +49,6 @@ def _prog(analisis: Analisis, db: Session, pct: int, mensaje: str):
 
 
 def analizar_proceso(proceso_id: int, db: Session) -> dict:
-    import time
     limpiar_cancelacion(proceso_id)
 
     proceso = db.query(Proceso).filter(Proceso.id == proceso_id).first()
@@ -66,7 +68,7 @@ def analizar_proceso(proceso_id: int, db: Session) -> dict:
         if cancelacion_activa(proceso_id):
             logger.info("  Cancelado en CV %s.", idx)
             resultados["cancelado"] = True
-            for c_resto in candidatos[idx - 1:]:
+            for c_resto in candidatos[idx:]:
                 try:
                     an = db.query(Analisis).filter(Analisis.candidato_id == c_resto.id).first()
                     if not an:
@@ -124,7 +126,13 @@ def analizar_proceso(proceso_id: int, db: Session) -> dict:
 
                 texto = extraer_texto(pdf_path)
                 if not texto or len(texto.strip()) < 50:
-                    raise ValueError("PDF sin texto seleccionable (posible imagen escaneada).")
+                    raise ValueError(
+                        "'{name}' no tiene texto seleccionable. "
+                        "El PDF parece estar escaneado como imagen. "
+                        "Convertilo a PDF con texto (usá OCR) antes de subirlo.".format(
+                            name=pdf_path.name
+                        )
+                    )
 
                 candidato.texto_cv = texto
                 if not candidato.email:    candidato.email    = extraer_email(texto)
@@ -181,6 +189,7 @@ def analizar_proceso(proceso_id: int, db: Session) -> dict:
             analisis.proveedor_ia  = settings.IA_PROVIDER
             analisis.procesado_en  = datetime.now(timezone.utc)
             analisis.error_msg     = None
+            analisis.progress_msg  = None  # Limpiar progreso al completar
             db.commit()
             db.refresh(analisis)
 
@@ -192,8 +201,9 @@ def analizar_proceso(proceso_id: int, db: Session) -> dict:
             tb = traceback.format_exc()
             logger.error("  ERROR [%s/%s] candidato %s: %s\n%s", idx, total, candidato.id, e, tb)
             try:
-                analisis.estado    = EstadoAnalisis.ERROR
-                analisis.error_msg = str(e)
+                analisis.estado       = EstadoAnalisis.ERROR
+                analisis.error_msg    = str(e)
+                analisis.progress_msg = None  # Limpiar progreso al fallar
                 db.commit()
             except Exception as e2:
                 logger.error("  No se pudo guardar error: %s", e2)

@@ -33,6 +33,139 @@ function ProgressBar({ value, cancelado }) {
   )
 }
 
+function ResourceMonitor({ activo }) {
+  const [res, setRes] = useState(null)
+  const ref = useRef(null)
+
+  const poll = useCallback(async () => {
+    try {
+      const r = await api.get('/config/recursos')
+      setRes(r.data)
+    } catch {}
+  }, [])
+
+  useEffect(() => {
+    // Llamar inmediatamente al montar o cuando activo cambia a true
+    poll()
+    if (!activo) return
+    ref.current = setInterval(poll, 3000)
+    return () => clearInterval(ref.current)
+  }, [activo, poll])
+
+  // Reactivar al volver a la vista
+  useEffect(() => {
+    const onVisible = () => { if (!document.hidden && activo) poll() }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
+  }, [activo, poll])
+
+  if (!res) return null
+
+  const gpu  = res.gpu
+  const usoGPU = gpu?.disponible && gpu?.ollama_en_gpu
+
+  const Bar = ({ pct, color }) => (
+    <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: '#2A3A52' }}>
+      <div className="h-full rounded-full transition-all duration-700"
+        style={{ width: Math.min(pct, 100) + '%', background: color }} />
+    </div>
+  )
+
+  const Stat = ({ label, value, pct, color, alert }) => (
+    <div className="flex items-center gap-2">
+      <span className="text-xs text-slate-500 w-8 flex-shrink-0">{label}</span>
+      <Bar pct={pct} color={alert ? '#F87171' : color} />
+      <span className="text-xs font-mono w-10 text-right flex-shrink-0"
+        style={{ color: alert ? '#F87171' : color }}>
+        {value}
+      </span>
+    </div>
+  )
+
+  return (
+    <div className="p-4 rounded-xl mb-4"
+      style={{ background: '#0D1520', border: '1px solid #1E2D42' }}>
+
+      {/* Header con indicador GPU */}
+      <div className="flex items-center justify-between mb-3">
+        <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">
+          Monitor de recursos
+        </span>
+        <div className="flex items-center gap-2">
+          {gpu?.disponible ? (
+            <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full"
+              style={{
+                background: usoGPU ? 'rgba(74,222,128,0.1)' : 'rgba(250,204,21,0.1)',
+                border: '1px solid ' + (usoGPU ? 'rgba(74,222,128,0.3)' : 'rgba(250,204,21,0.3)')
+              }}>
+              <span className="w-1.5 h-1.5 rounded-full flex-shrink-0"
+                style={{ background: usoGPU ? '#4ADE80' : '#FACC15' }} />
+              <span className="text-xs font-bold"
+                style={{ color: usoGPU ? '#4ADE80' : '#FACC15' }}>
+                {usoGPU ? 'GPU activa' : 'GPU: sin uso'}
+              </span>
+            </div>
+          ) : (
+            <span className="text-xs text-slate-600">Sin GPU NVIDIA</span>
+          )}
+        </div>
+      </div>
+
+      {/* Metricas */}
+      <div className="space-y-2">
+        <Stat label="CPU"
+          pct={res.cpu_pct}
+          value={res.cpu_pct + '%'}
+          color="#22D3EE"
+          alert={res.cpu_pct > 95} />
+        <Stat label="RAM"
+          pct={res.ram_pct}
+          value={res.ram_pct + '%'}
+          color="#A78BFA"
+          alert={res.ram_pct > 90} />
+        {gpu?.disponible && (
+          <>
+            <Stat label="GPU"
+              pct={gpu.gpu_pct}
+              value={gpu.gpu_pct + '%'}
+              color="#4ADE80"
+              alert={false} />
+            <Stat label="VRAM"
+              pct={gpu.vram_pct}
+              value={gpu.vram_pct + '%'}
+              color="#FB923C"
+              alert={gpu.vram_pct > 90} />
+          </>
+        )}
+      </div>
+
+      {/* Detalle GPU */}
+      {gpu?.disponible && (
+        <div className="mt-3 pt-3 border-t" style={{ borderColor: '#1E2D42' }}>
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-slate-600 truncate">{gpu.nombre}</span>
+            <span className="text-xs font-mono text-slate-500">
+              {gpu.vram_usada_mb} / {gpu.vram_total_mb} MB VRAM
+            </span>
+          </div>
+          {!usoGPU && gpu.disponible && gpu.mensaje && (
+            <div className="mt-2 text-xs text-yellow-400 flex items-start gap-1.5">
+              <span className="flex-shrink-0">⚠</span>
+              <span>{gpu.mensaje}</span>
+            </div>
+          )}
+          {usoGPU && (
+            <div className="mt-2 text-xs text-green-400 flex items-center gap-1.5">
+              <span>✓</span>
+              <span>Ollama usando {gpu.ollama_vram_mb} MB VRAM — análisis acelerado por GPU</span>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function OllamaStatus({ status }) {
   if (!status) return null
   const ok = status.ollama_disponible && status.modelo_disponible
@@ -78,8 +211,16 @@ export default function NuevoAnalisis() {
   }, [])
 
   const onDrop = useCallback((accepted) => {
-    setFiles(prev => [...prev, ...accepted.filter(f => !prev.find(e => e.name === f.name))])
-  }, [files])
+    setFiles(prev => {
+      // Deduplicar por nombre + tamaño para permitir archivos con mismo nombre pero distinto contenido
+      const nuevos = accepted.filter(f =>
+        !prev.find(e => e.name === f.name && e.size === f.size)
+      )
+      const duplicados = accepted.length - nuevos.length
+      if (duplicados > 0) toast(`${duplicados} archivo${duplicados > 1 ? 's' : ''} duplicado${duplicados > 1 ? 's' : ''} ignorado${duplicados > 1 ? 's' : ''}.`, { icon: '⚠️' })
+      return [...prev, ...nuevos]
+    })
+  }, [])
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop, accept: { 'application/pdf': ['.pdf'] }, maxFiles: 20,
@@ -141,7 +282,7 @@ export default function NuevoAnalisis() {
               <>
                 <div className="text-5xl mb-4">⛔</div>
                 <h2 className="text-2xl font-black text-white mb-2">Análisis cancelado</h2>
-                <p className="text-slate-400 text-sm">{completado} de {total} CVs procesados.</p>
+                <p className="text-slate-400 text-sm">{completado} de {total} CVs procesados antes de cancelar.</p>
               </>
             ) : (
               <>
@@ -199,6 +340,9 @@ export default function NuevoAnalisis() {
               </div>
             )}
 
+            {/* Monitor de recursos */}
+            <ResourceMonitor activo={paso === 'analizando' && !cancelado} />
+
             {/* Lista CVs */}
             <div className="space-y-2">
               {items.map((item, i) => {
@@ -228,15 +372,20 @@ export default function NuevoAnalisis() {
             </div>
           </Card>
 
-          {paso === 'listo' && (
+          {(paso === 'listo' || cancelado) && (
             <div className="flex gap-3">
               {completado > 0 && (
-                <button onClick={() => { limpiarAnalisis(); navigate('/resultados/' + procesoId) }}
+                <button onClick={() => { const id = procesoId; limpiarAnalisis(); navigate('/resultados/' + id) }}
                   className="flex-1 py-3.5 rounded-xl font-black text-sm transition-all"
-                  style={{ background: 'linear-gradient(135deg, #22D3EE, #06B6D4)', color: '#0A0F1A' }}
+                  style={{ background: cancelado
+                    ? 'linear-gradient(135deg, #F59E0B, #D97706)'
+                    : 'linear-gradient(135deg, #22D3EE, #06B6D4)', color: '#0A0F1A' }}
                   onMouseEnter={e => e.currentTarget.style.filter = 'brightness(1.08)'}
                   onMouseLeave={e => e.currentTarget.style.filter = ''}>
-                  Ver {completado} resultado{completado !== 1 ? 's' : ''} →
+                  {cancelado
+                    ? 'Ver ' + completado + ' resultado' + (completado !== 1 ? 's parciales' : ' parcial') + ' →'
+                    : 'Ver ' + completado + ' resultado' + (completado !== 1 ? 's' : '') + ' →'
+                  }
                 </button>
               )}
               <button onClick={() => { limpiarAnalisis(); setFiles([]) }}
@@ -244,7 +393,7 @@ export default function NuevoAnalisis() {
                 style={{ background: '#1A2235', color: '#94A3B8', border: '1px solid #2A3A52' }}
                 onMouseEnter={e => e.currentTarget.style.borderColor = '#22D3EE'}
                 onMouseLeave={e => e.currentTarget.style.borderColor = '#2A3A52'}>
-                Nuevo análisis
+                🔄 Nuevo análisis
               </button>
             </div>
           )}

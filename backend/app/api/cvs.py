@@ -1,8 +1,13 @@
+# -*- coding: utf-8 -*-
 """
 Endpoints de CVs. El estado devuelve progreso granular por sub-pasos.
 """
 
+import os
 import re
+import threading
+import traceback
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 from typing import List
@@ -11,15 +16,13 @@ from app.db.database import get_db, SessionLocal
 from app.models.user import User
 from app.models.proceso import Proceso
 from app.models.candidato import Candidato
+from app.models.analisis import Analisis, EstadoAnalisis
 from app.core.dependencies import require_reclutador_or_admin
 from app.utils.file_utils import validar_pdf, get_cv_path, guardar_archivo
 from app.services.analisis_service import analizar_proceso, solicitar_cancelacion, cancelacion_activa
 from app.schemas.proceso import CandidatoOut
 
 router = APIRouter()
-
-# Tiempo de inicio por proceso_id
-_inicio_analisis: dict[int, float] = {}
 
 
 # -- Ruta fija ANTES de /{proceso_id}/... ------------------------------------
@@ -31,30 +34,19 @@ async def estado_ollama(_: User = Depends(require_reclutador_or_admin)):
 
 # -- Background task en thread separado con prioridad reducida ---------------
 def _worker(proceso_id: int):
-    """Corre en thread separado. Prioridad reducida para no congelar el sistema."""
-    import threading
-    # Bajar prioridad del thread en Windows
-    try:
-        import ctypes
-        ctypes.windll.kernel32.SetThreadPriority(
-            ctypes.windll.kernel32.GetCurrentThread(), -1)  # THREAD_PRIORITY_BELOW_NORMAL
-    except Exception:
-        pass
-
+    """Corre en thread separado."""
     db = SessionLocal()
     try:
         analizar_proceso(proceso_id, db)
     except Exception as e:
-        import traceback
-        from app.utils.logger import get_logger
         tb = traceback.format_exc()
+        from app.utils.logger import get_logger
         get_logger(__name__).error("Error en worker proceso %s: %s | %s", proceso_id, e, tb)
     finally:
         db.close()
 
 
 def analizar_en_background(proceso_id: int):
-    import threading
     t = threading.Thread(target=_worker, args=(proceso_id,), daemon=True)
     t.start()
 
@@ -103,8 +95,11 @@ async def analizar(
     if total == 0:
         raise HTTPException(status_code=400, detail="No hay CVs cargados.")
 
-    import time
-    _inicio_analisis[proceso_id] = time.time()
+    # Persistir inicio en BD (sobrevive reinicios y múltiples workers)
+    proceso.inicio_analisis   = datetime.now(timezone.utc)
+    proceso.tiempo_analisis_s = None
+    db.commit()
+
     background_tasks.add_task(analizar_en_background, proceso_id)
     label = "CVs" if total != 1 else "CV"
     return {"mensaje": "Analisis iniciado para {} {}.".format(total, label), "total": total}
@@ -132,8 +127,6 @@ def estado_analisis(
     _: User = Depends(require_reclutador_or_admin),
     db: Session = Depends(get_db),
 ):
-    from app.models.analisis import Analisis, EstadoAnalisis
-
     db.expire_all()
 
     candidatos = db.query(Candidato).filter(Candidato.proceso_id == proceso_id).all()
@@ -160,11 +153,12 @@ def estado_analisis(
                 completados += 1
             elif an.estado == EstadoAnalisis.ERROR:
                 completados += 1
-            elif an.estado == EstadoAnalisis.PROCESANDO and an.error_msg:
-                match = re.match(r'\[PROG:(\d+)\]\s*(.*)', an.error_msg)
-                if match:
-                    sub_pct    = int(match.group(1))
-                    log_actual = match.group(2)
+            elif an.estado == EstadoAnalisis.PROCESANDO and an.progress_msg:
+                if an.progress_msg.startswith("[PROG:"):
+                    match = re.match(r'\[PROG:(\d+)\]\s*(.*)', an.progress_msg)
+                    if match:
+                        sub_pct    = int(match.group(1))
+                        log_actual = match.group(2)
 
     estados["log_actual"] = log_actual
     estados["sub_pct"]    = sub_pct
@@ -172,16 +166,24 @@ def estado_analisis(
     if total > 0:
         estados["progreso_global"] = int((completados * 100 + sub_pct) / total)
 
-    estados["listo"]    = total > 0 and (estados["completado"] + estados["error"]) == total
+    listo = total > 0 and (estados["completado"] + estados["error"]) == total
+    estados["listo"]    = listo
     estados["cancelado"] = cancelacion_activa(proceso_id)
 
-    # Tiempo transcurrido
-    import time
-    inicio = _inicio_analisis.get(proceso_id)
-    if inicio:
-        estados["tiempo_transcurrido_s"] = int(time.time() - inicio)
+    # Tiempo transcurrido — leer inicio_analisis desde BD (sobrevive reinicios)
+    proceso = db.query(Proceso).filter(Proceso.id == proceso_id).first()
+    if proceso and proceso.inicio_analisis:
+        inicio  = proceso.inicio_analisis.replace(tzinfo=timezone.utc) if proceso.inicio_analisis.tzinfo is None else proceso.inicio_analisis
+        elapsed = int((datetime.now(timezone.utc) - inicio).total_seconds())
+        estados["tiempo_transcurrido_s"] = elapsed
+        # Persistir tiempo final cuando termina
+        if listo and not proceso.tiempo_analisis_s:
+            proceso.tiempo_analisis_s = elapsed
+            db.commit()
     else:
-        estados["tiempo_transcurrido_s"] = 0
+        # Sin inicio registrado — devolver tiempo guardado si existe
+        tiempo_guardado = proceso.tiempo_analisis_s if proceso else None
+        estados["tiempo_transcurrido_s"] = tiempo_guardado or 0
 
     return estados
 
@@ -194,7 +196,6 @@ def eliminar_candidato(
     _: User = Depends(require_reclutador_or_admin),
     db: Session = Depends(get_db),
 ):
-    import os
     c = db.query(Candidato).filter(
         Candidato.id == candidato_id, Candidato.proceso_id == proceso_id
     ).first()

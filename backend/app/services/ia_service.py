@@ -1,20 +1,36 @@
+# -*- coding: utf-8 -*-
 """
-Motor de IA - SINCRONO, optimizado para velocidad.
-Tiempos medidos: ~3m30s por CV con qwen2.5:14b en CPU.
-Objetivo con optimizaciones: ~2m20s por CV (-35%).
+Motor de IA optimizado.
+- Tokens y contexto dinamicos segun modelo seleccionado
+- _reparar_json: cierra JSON truncado por limite de tokens
+- keep_alive=-1, mmap/f16_kv para CPU
 """
 
 import json
 import re
 import os
-import threading
 from app.core.config import settings
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-# Prompt con rubrica clara para evitar puntajes consecutivos
-PROMPT_COMPLETO = """Experto en RRHH. Evaluá este CV con criterio objetivo e independiente.
+# Parametros optimos por modelo
+# num_predict: cuantos tokens puede generar para el JSON completo
+# num_ctx: contexto maximo (prompt + respuesta)
+# verbosidad: cuanto escribe el modelo (ajusta el prompt)
+MODELO_PARAMS = {
+    "llama3.1:8b":                  {"num_predict": 1200, "num_ctx": 4096, "verboso": False},
+    "qwen2.5:7b":                   {"num_predict": 1800, "num_ctx": 4096, "verboso": True},
+    "qwen2.5:14b":                  {"num_predict": 1200, "num_ctx": 4096, "verboso": False},
+    "qwen2.5:32b":                  {"num_predict": 1200, "num_ctx": 4096, "verboso": False},
+}
+
+# Instruccion adicional para modelos verbosos
+_INSTRUCCION_CORTA = " Descripciones MUY CORTAS (max 8 palabras cada una)."
+_INSTRUCCION_NORMAL = " Descripciones concisas (max 15 palabras cada una)."
+
+PROMPT_COMPLETO = """Experto RRHH. Evalua el CV para el puesto indicado.{instruccion}
+Responde SOLO JSON, sin texto extra ni markdown.
 
 PUESTO: {nombre_puesto}
 REQUISITOS:
@@ -23,36 +39,53 @@ REQUISITOS:
 CV:
 {texto_cv}
 
-RUBRICA DE PUNTAJE POR CRITERIO:
-- 90-100: Cumple ampliamente, supera lo solicitado
-- 70-89:  Cumple el requisito claramente
-- 50-69:  Cumple parcialmente, hay brechas menores
-- 25-49:  Cumple muy poco, brechas importantes
-- 0-24:   No cumple o no hay evidencia
+RUBRICA: 90-100=supera | 70-89=cumple | 50-69=parcial | 25-49=brecha | 0-24=no cumple
 
-IMPORTANTE: Cada criterio es INDEPENDIENTE. No ordenes los puntajes.
-Asigná el puntaje que corresponda a la evidencia, no al ranking del candidato.
-
-JSON de respuesta (sin texto adicional):
-{{"nombre":"<nombre completo o null>","email":"<email o null>","telefono":"<telefono o null>","puntaje_total":<promedio ponderado 0-100>,"criterios":[{{"criterio":"<requisito exacto>","cumple":"<si|parcial|no>","descripcion":"<evidencia concreta del CV>","puntaje":<0-100 segun rubrica>}}],"resumen":"<3 oraciones: fortalezas concretas, brechas detectadas, recomendacion final>"}}"""
+JSON:
+{{"nombre":"<str|null>","email":"<str|null>","telefono":"<str|null>","puntaje_total":<int>,"criterios":[{{"criterio":"<str>","cumple":"<si|parcial|no>","descripcion":"<breve>","puntaje":<int>}}],"resumen":"<Fortalezas: X. Brechas: Y.>"}}"""
 
 
-def _get_opciones(max_ctx: int = 3072) -> dict:
+def _params_modelo(modelo: str) -> dict:
+    """Devuelve num_predict y num_ctx optimos para el modelo activo."""
+    base = modelo.split(":")[0] + ":" + modelo.split(":")[1] if ":" in modelo else modelo
+    # Buscar coincidencia exacta primero, luego por prefijo
+    if modelo in MODELO_PARAMS:
+        return MODELO_PARAMS[modelo]
+    for key, val in MODELO_PARAMS.items():
+        if modelo.startswith(key.split(":")[0]):
+            return val
+    # Default seguro
+    return {"num_predict": 1500, "num_ctx": 4096, "verboso": True}
+
+
+def _get_opciones(max_ctx: int = 4096) -> dict:
     total_cores = os.cpu_count() or 4
     try:
         from app.api.config import leer_config
         cfg = leer_config()
         dispositivo = cfg.get("dispositivo", "cpu")
-        threads_cfg = cfg.get("num_threads", total_cores)
-        # Dejar 2 cores libres para el sistema
+        threads_cfg = cfg.get("num_threads", max(total_cores - 2, 2))
         threads = min(threads_cfg, max(total_cores - 2, 2))
-        return {
-            "temperature": 0,
-            "seed":        42,
-            "num_gpu":     999 if dispositivo == "gpu" else 0,
-            "num_thread":  threads,
-            "num_ctx":     max_ctx,
-        }
+
+        if dispositivo == "gpu":
+            return {
+                "temperature": 0,
+                "seed":        42,
+                "num_gpu":     999,
+                "num_ctx":     max_ctx,
+                "keep_alive":  -1,
+            }
+        else:
+            return {
+                "temperature": 0,
+                "seed":        42,
+                "num_gpu":     0,
+                "num_thread":  threads,
+                "num_ctx":     max_ctx,
+                "keep_alive":  -1,
+                "mmap":        True,
+                "f16_kv":      False,
+            }
     except Exception:
         return {
             "temperature": 0,
@@ -60,23 +93,28 @@ def _get_opciones(max_ctx: int = 3072) -> dict:
             "num_gpu":     0,
             "num_thread":  max(total_cores - 2, 2),
             "num_ctx":     max_ctx,
+            "keep_alive":  -1,
+            "mmap":        True,
         }
 
 
 def analizar_cv_completo(nombre_puesto: str, requisitos: str, texto_cv: str) -> dict:
-    """
-    Una sola llamada a Ollama: extrae datos del candidato + analiza el CV.
-    Sin timeout — el analisis puede tardar lo que necesite.
-    """
     if not texto_cv or len(texto_cv.strip()) < 50:
         raise ValueError("CV sin texto suficiente para analizar.")
 
-    # 3000 chars captura toda la info relevante de un CV (experiencia, educacion, skills)
-    # Reducir de 4000 a 3000 = ~25% menos tokens de entrada
+    texto = texto_cv.strip()
+    if len(texto) > 2000:
+        texto = texto[:1500] + "\n...\n" + texto[-500:]
+
+    # Ajustar instruccion segun verbosidad del modelo
+    params = _params_modelo(settings.OLLAMA_MODEL)
+    instruccion = _INSTRUCCION_CORTA if params["verboso"] else _INSTRUCCION_NORMAL
+
     prompt = PROMPT_COMPLETO.format(
+        instruccion=instruccion,
         nombre_puesto=nombre_puesto,
         requisitos=requisitos,
-        texto_cv=texto_cv[:3000],
+        texto_cv=texto,
     )
 
     if settings.IA_PROVIDER == "ollama":
@@ -91,21 +129,31 @@ def _llamar_ollama(prompt: str) -> dict:
     try:
         import ollama
     except ImportError:
-        raise RuntimeError("Libreria 'ollama' no instalada. Ejecuta: pip install ollama")
+        raise RuntimeError("Libreria 'ollama' no instalada.")
 
-    # Calcular contexto minimo necesario (no desperdiciar memoria)
+    params = _params_modelo(settings.OLLAMA_MODEL)
+    max_tokens = params["num_predict"]
+    max_ctx    = params["num_ctx"]
+
     prompt_tokens = len(prompt) // 3
-    max_tokens    = 1200  # Suficiente para el JSON completo con todos los criterios
-    ctx           = min(prompt_tokens + max_tokens + 256, 3072)
+    ctx = min(prompt_tokens + max_tokens + 256, max_ctx)
 
     opts = _get_opciones(max_ctx=ctx)
     opts["num_predict"] = max_tokens
 
-    logger.info("  Ollama: modelo=%s ctx=%s gpu=%s threads=%s max_tokens=%s",
-                settings.OLLAMA_MODEL, ctx, opts["num_gpu"], opts["num_thread"], max_tokens)
+    # Detectar modelo base (no instruct) — no siguen instrucciones via chat
+    nombre_lower = settings.OLLAMA_MODEL.lower()
+    if "-base" in nombre_lower and "-instruct" not in nombre_lower:
+        raise RuntimeError(
+            "El modelo '{}' es un modelo BASE y no sigue instrucciones. "
+            "Usa la variante '-instruct' (ej: qwen2.5-coder:14b-instruct-q3_K_M).".format(settings.OLLAMA_MODEL)
+        )
 
-    # Sin timeout — esperamos lo que sea necesario
-    # El analisis manual de un CV toma 15-30 min; 2-4 min de IA es siempre mejor
+    logger.info("  Ollama [%s]: ctx=%s gpu=%s threads=%s tokens=%s prompt_chars=%s",
+                settings.OLLAMA_MODEL, ctx,
+                opts.get("num_gpu", 0), opts.get("num_thread", "GPU"),
+                max_tokens, len(prompt))
+
     try:
         r = ollama.chat(
             model=settings.OLLAMA_MODEL,
@@ -113,6 +161,12 @@ def _llamar_ollama(prompt: str) -> dict:
             options=opts,
         )
         texto = r["message"]["content"].strip()
+        # Respuesta vacia = modelo no siguio instrucciones (posible base model sin detectar)
+        if not texto:
+            raise RuntimeError(
+                "El modelo devolvio respuesta vacia. Verificá que sea una variante '-instruct', "
+                "no '-base'. Modelo actual: '{}'.".format(settings.OLLAMA_MODEL)
+            )
         logger.info("  Respuesta: %s chars", len(texto))
         return _parsear(texto)
     except Exception as e:
@@ -136,9 +190,46 @@ def _llamar_openai(prompt: str) -> dict:
         model=settings.OPENAI_MODEL,
         messages=[{"role": "user", "content": prompt}],
         temperature=0,
+        max_tokens=1500,
         response_format={"type": "json_object"},
     )
     return _parsear(r.choices[0].message.content.strip())
+
+
+def _reparar_json(texto: str) -> str:
+    """Cierra JSON truncado por limite de tokens."""
+    reparado = texto.rstrip()
+
+    zona_final = reparado[-200:] if len(reparado) > 200 else reparado
+    if zona_final.count('"') % 2 != 0:
+        reparado += '"'
+
+    reparado = reparado.rstrip().rstrip(',').rstrip(':').rstrip(',')
+
+    ultimo_criterio = reparado.rfind('"criterio"')
+    if ultimo_criterio > 0:
+        fragmento = reparado[ultimo_criterio:]
+        if not all(k in fragmento for k in ('"cumple"', '"puntaje"')):
+            inicio = reparado.rfind('{', 0, ultimo_criterio)
+            if inicio > 0:
+                reparado = reparado[:inicio].rstrip(',').rstrip()
+
+    faltan_c = reparado.count('[') - reparado.count(']')
+    faltan_l = reparado.count('{') - reparado.count('}')
+    for _ in range(max(0, faltan_c)):
+        reparado += ']'
+    for _ in range(max(0, faltan_l)):
+        reparado += '}'
+
+    try:
+        parcial = json.loads(reparado)
+        if "resumen" not in parcial:
+            reparado = reparado.rstrip('}').rstrip()
+            reparado += ',"resumen":"Analisis completado."}'
+    except Exception:
+        pass
+
+    return reparado
 
 
 def _parsear(texto: str) -> dict:
@@ -146,11 +237,18 @@ def _parsear(texto: str) -> dict:
     match = re.search(r'\{.*\}', texto, re.DOTALL)
     if match:
         texto = match.group(0)
+
     try:
         data = json.loads(texto)
     except json.JSONDecodeError as e:
-        logger.error("JSON invalido: %s | Texto: %s", e, texto[:300])
-        raise ValueError("La IA no devolvio JSON valido: {}".format(e))
+        logger.warning("JSON invalido (%s) - intentando reparar...", e)
+        try:
+            texto_reparado = _reparar_json(texto)
+            data = json.loads(texto_reparado)
+            logger.info("JSON reparado exitosamente")
+        except json.JSONDecodeError as e2:
+            logger.error("JSON no reparable: %s | Texto: %s", e2, texto[:300])
+            raise ValueError("La IA no devolvio JSON valido: {}".format(e))
 
     if "puntaje_total" not in data:
         raise ValueError("Falta puntaje_total en la respuesta.")

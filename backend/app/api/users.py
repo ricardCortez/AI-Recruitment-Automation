@@ -96,9 +96,17 @@ def resetear_clave(
     if not user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado.")
 
-    temp_password = "Temp@2025!"
+    import secrets, string
+    chars = string.ascii_letters + string.digits + "!@#$%"
+    temp_password = ''.join(secrets.choice(chars) for _ in range(12))
     user.hashed_password    = hash_password(temp_password)
     user.debe_cambiar_clave = True
     db.commit()
 
-    return {"mensaje": f"Contraseña reseteada.", "password_temporal": temp_password}
+    # NOTA: la contraseña temporal se devuelve aquí para que el admin
+    # la comunique al usuario por canal seguro (presencialmente / mensaje directo).
+    # No registrar en logs externos en producción.
+    return {
+        "mensaje":          "Contraseña reseteada. Entregá la contraseña temporal al usuario por un canal seguro.",
+        "password_temporal": temp_password,
+    }

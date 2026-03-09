@@ -1,30 +1,50 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import api from '../services/api'
 import AppLayout from '../components/layout/AppLayout'
 import { Card, CardTitle, Spinner } from '../components/ui/index.jsx'
 import toast from 'react-hot-toast'
 
+// ─── Catálogo de modelos con requisitos de hardware ──────────────────────────
 const MODELOS = [
   {
-    id: 'llama3.1:8b', label: 'Llama 3.1 8B', ram: 6, vram: 6,
-    desc: 'El más rápido de los tres. Bueno para pruebas o equipos con poca RAM.',
-    tag: 'Rápido',  tagColor: '#22D3EE',
-    fortalezas: ['Respuesta rápida', 'Bajo consumo de RAM', 'Bueno en inglés'],
+    id: 'llama3.1:8b',
+    label: 'Llama 3.1 8B',
+    tag: 'Rápido',
+    tagColor: '#22D3EE',
+    desc: 'El más rápido. Bueno para pruebas o equipos con poca RAM.',
+    ram_gb: 6, vram_gb: 5,
+    ram_optima: 8, vram_optima: 6,
+    ctx: 4096, tokens: 1200,
+    fortalezas: ['Respuesta rápida', 'Bajo consumo RAM', 'Bueno en inglés'],
+    pull: 'ollama pull llama3.1:8b',
   },
   {
-    id: 'qwen2.5:7b',  label: 'Qwen 2.5 7B',  ram: 6, vram: 6,
+    id: 'qwen2.5:7b',
+    label: 'Qwen 2.5 7B',
+    tag: 'Equilibrado',
+    tagColor: '#4ADE80',
     desc: 'Mejor comprensión del español que Llama con el mismo hardware.',
-    tag: 'Equilibrado', tagColor: '#4ADE80',
-    fortalezas: ['Mejor en español', 'Mismo hardware que Llama', 'JSON más consistente'],
+    ram_gb: 6, vram_gb: 5,
+    ram_optima: 8, vram_optima: 6,
+    ctx: 4096, tokens: 1800,
+    fortalezas: ['Mejor en español', 'Mismo hardware que Llama', 'JSON consistente'],
+    pull: 'ollama pull qwen2.5:7b',
   },
   {
-    id: 'qwen2.5:14b', label: 'Qwen 2.5 14B', ram: 10, vram: 10,
-    desc: 'El más preciso de los tres. Recomendado para análisis de producción.',
-    tag: 'Recomendado', tagColor: '#A78BFA',
-    fortalezas: ['Mayor precisión', 'Mejor razonamiento', 'Ideal para producción'],
+    id: 'qwen2.5:14b',
+    label: 'Qwen 2.5 14B',
+    tag: 'Recomendado',
+    tagColor: '#A78BFA',
+    desc: 'El más preciso para análisis de producción. Necesita >8GB VRAM.',
+    ram_gb: 10, vram_gb: 9,
+    ram_optima: 12, vram_optima: 10,
+    ctx: 4096, tokens: 1200,
+    fortalezas: ['Mayor precisión', 'Mejor razonamiento', 'Ideal producción'],
+    pull: 'ollama pull qwen2.5:14b',
   },
 ]
 
+// ─── Sub-componentes ──────────────────────────────────────────────────────────
 function RamBar({ usado, total, label, color = '#22D3EE' }) {
   const pct = total > 0 ? Math.min((usado / total) * 100, 100) : 0
   const barColor = pct > 85 ? '#F87171' : pct > 65 ? '#FACC15' : color
@@ -40,50 +60,160 @@ function RamBar({ usado, total, label, color = '#22D3EE' }) {
         <div className="h-full rounded-full transition-all duration-700"
           style={{ width: `${pct}%`, background: barColor }} />
       </div>
-      <div className="text-xs text-slate-600 mt-1">
-        {(total - usado).toFixed(1)} GB disponibles
-      </div>
+      <div className="text-xs text-slate-600 mt-1">{(total - usado).toFixed(1)} GB disponibles</div>
     </div>
   )
 }
 
-function StatusBadge({ ok, labelOk, labelBad }) {
+function Badge({ ok, labelOk, labelBad }) {
   return (
     <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold"
-      style={{ background: ok ? 'rgba(74,222,128,0.1)' : 'rgba(248,113,113,0.1)',
-               color: ok ? '#4ADE80' : '#F87171',
-               border: `1px solid ${ok ? 'rgba(74,222,128,0.25)' : 'rgba(248,113,113,0.25)'}` }}>
+      style={{
+        background: ok ? 'rgba(74,222,128,0.1)' : 'rgba(248,113,113,0.1)',
+        color: ok ? '#4ADE80' : '#F87171',
+        border: `1px solid ${ok ? 'rgba(74,222,128,0.25)' : 'rgba(248,113,113,0.25)'}`,
+      }}>
       <span className="w-1.5 h-1.5 rounded-full" style={{ background: ok ? '#4ADE80' : '#F87171' }} />
       {ok ? labelOk : labelBad}
     </span>
   )
 }
 
+// Panel de compatibilidad de hardware para un modelo seleccionado
+function HardwareCheck({ modelo, gpu, ram, dispositivo }) {
+  if (!modelo) return null
+
+  const m = MODELOS.find(x => x.id === modelo)
+  if (!m) return null
+
+  const ramDisp    = ram.disponible_gb || 0
+  const ramTotal   = ram.total_gb || 0
+  const vramDisp   = gpu.disponible && gpu.gpus?.length > 0 ? gpu.gpus[0].vram_libre / 1024 : 0
+  const vramTotal  = gpu.disponible && gpu.gpus?.length > 0 ? gpu.gpus[0].vram_total / 1024 : 0
+
+  const ramOk      = ramDisp >= m.ram_gb
+  const ramOptima  = ramDisp >= m.ram_optima
+  const vramOk     = vramDisp >= m.vram_gb
+  const vramOptima = vramDisp >= m.vram_optima
+
+  const cpuOk  = ramOk
+  const gpuOk  = gpu.disponible && vramOk
+
+  // Recomendacion general
+  let recomendacion, recoColor, recoIcon
+  if (dispositivo === 'gpu') {
+    if (!gpu.disponible) {
+      recoIcon = '⚠️'; recoColor = '#F87171'
+      recomendacion = 'No tenés GPU NVIDIA disponible. Cambiá a CPU.'
+    } else if (!vramOk) {
+      recoIcon = '❌'; recoColor = '#F87171'
+      recomendacion = `VRAM insuficiente: necesitás ${m.vram_gb} GB, tenés ${vramDisp.toFixed(1)} GB libres.`
+    } else if (!vramOptima) {
+      recoIcon = '⚠️'; recoColor = '#FACC15'
+      recomendacion = `VRAM ajustada: funciona pero para optimo necesitás ${m.vram_optima} GB.`
+    } else {
+      recoIcon = '✅'; recoColor = '#4ADE80'
+      recomendacion = 'GPU con VRAM suficiente. Rendimiento óptimo esperado.'
+    }
+  } else {
+    if (!ramOk) {
+      recoIcon = '❌'; recoColor = '#F87171'
+      recomendacion = `RAM insuficiente: necesitás ${m.ram_gb} GB libres, tenés ${ramDisp.toFixed(1)} GB.`
+    } else if (!ramOptima) {
+      recoIcon = '⚠️'; recoColor = '#FACC15'
+      recomendacion = `RAM ajustada: funciona pero puede ser lento. Para optimo: ${m.ram_optima} GB.`
+    } else {
+      recoIcon = '✅'; recoColor = '#4ADE80'
+      recomendacion = 'RAM suficiente para CPU. Análisis estable esperado.'
+    }
+  }
+
+  return (
+    <div className="mt-4 rounded-xl overflow-hidden" style={{ border: `1px solid ${recoColor}33` }}>
+
+      {/* Header recomendacion */}
+      <div className="px-4 py-3 flex items-start gap-3"
+        style={{ background: recoColor + '0D' }}>
+        <span className="text-xl flex-shrink-0">{recoIcon}</span>
+        <div>
+          <div className="text-xs font-bold text-white mb-0.5">Compatibilidad con hardware actual</div>
+          <div className="text-xs" style={{ color: recoColor }}>{recomendacion}</div>
+        </div>
+      </div>
+
+      {/* Grilla de checks */}
+      <div className="p-4 grid grid-cols-2 gap-3" style={{ background: '#111827' }}>
+
+        {/* RAM */}
+        <div className="p-3 rounded-xl" style={{ background: '#1A2235', border: '1px solid #2A3A52' }}>
+          <div className="text-xs text-slate-400 mb-2">Memoria RAM</div>
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-xs font-mono text-white">{ramDisp.toFixed(1)} / {ramTotal.toFixed(1)} GB</span>
+            <Badge ok={ramOk} labelOk="OK" labelBad="Insuf." />
+          </div>
+          <div className="text-xs text-slate-500">
+            Mínimo: <span style={{ color: ramOk ? '#4ADE80' : '#F87171' }}>{m.ram_gb} GB</span>
+            {' · '}Óptimo: <span style={{ color: ramOptima ? '#4ADE80' : '#FACC15' }}>{m.ram_optima} GB</span>
+          </div>
+        </div>
+
+        {/* VRAM */}
+        <div className="p-3 rounded-xl" style={{ background: '#1A2235', border: '1px solid #2A3A52' }}>
+          <div className="text-xs text-slate-400 mb-2">VRAM (GPU)</div>
+          {gpu.disponible ? (
+            <>
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-xs font-mono text-white">{vramDisp.toFixed(1)} / {vramTotal.toFixed(1)} GB</span>
+                <Badge ok={vramOk} labelOk="OK" labelBad="Insuf." />
+              </div>
+              <div className="text-xs text-slate-500">
+                Mínimo: <span style={{ color: vramOk ? '#4ADE80' : '#F87171' }}>{m.vram_gb} GB</span>
+                {' · '}Óptimo: <span style={{ color: vramOptima ? '#4ADE80' : '#FACC15' }}>{m.vram_optima} GB</span>
+              </div>
+            </>
+          ) : (
+            <div className="text-xs text-slate-500 mt-1">Sin GPU NVIDIA detectada</div>
+          )}
+        </div>
+
+        {/* Tokens (info) */}
+        <div className="p-3 rounded-xl" style={{ background: '#1A2235', border: '1px solid #2A3A52' }}>
+          <div className="text-xs text-slate-400 mb-1">Tokens por análisis</div>
+          <div className="text-sm font-black font-mono text-white">{m.tokens}</div>
+          <div className="text-xs text-slate-500 mt-0.5">num_predict configurado</div>
+        </div>
+
+        {/* Contexto (info) */}
+        <div className="p-3 rounded-xl" style={{ background: '#1A2235', border: '1px solid #2A3A52' }}>
+          <div className="text-xs text-slate-400 mb-1">Contexto (ctx)</div>
+          <div className="text-sm font-black font-mono text-white">{m.ctx.toLocaleString()}</div>
+          <div className="text-xs text-slate-500 mt-0.5">tokens de ventana</div>
+        </div>
+      </div>
+
+      {/* Comando de instalacion */}
+      <div className="px-4 pb-4" style={{ background: '#111827' }}>
+        <div className="text-xs text-slate-500 mb-1.5">Instalar modelo:</div>
+        <code className="block px-3 py-2 rounded-lg text-xs font-mono"
+          style={{ background: '#0A0F1A', color: '#4ADE80', border: '1px solid #1A2235' }}>
+          {m.pull}
+        </code>
+      </div>
+    </div>
+  )
+}
+
+// ─── Componente principal ─────────────────────────────────────────────────────
 export default function Configuracion() {
   const [data, setData]       = useState(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving]   = useState(false)
   const [config, setConfig]   = useState(null)
-
   const [diag, setDiag]       = useState(null)
   const [diagLoading, setDiagLoading] = useState(false)
-
-  const ejecutarDiagnostico = async () => {
-    setDiagLoading(true)
-    setDiag(null)
-    try {
-      const r = await api.get('/config/diagnostico-gpu')
-      setDiag(r.data)
-      if (r.data.gpu_activa) toast.success('GPU confirmada en uso.')
-      else toast('GPU no detectada activa. Ver recomendaciones.', { icon: '⚠️' })
-    } catch {
-      toast.error('Error ejecutando diagnóstico.')
-    } finally {
-      setDiagLoading(false)
-    }
-  }
-
   const [modelosInstalados, setModelosInstalados] = useState([])
+
+  const pollingRef = useRef(null)
 
   const cargar = () => {
     api.get('/config/')
@@ -96,7 +226,24 @@ export default function Configuracion() {
       .finally(() => setLoading(false))
   }
 
-  useEffect(() => { cargar() }, [])
+  // Refresca solo GPU y RAM sin pisar la config editada por el usuario
+  const refrescarHardware = () => {
+    api.get('/config/')
+      .then(r => {
+        setData(prev => prev
+          ? { ...prev, gpu: r.data.gpu, ram: r.data.ram,
+              ram_suficiente: r.data.ram_suficiente,
+              vram_suficiente: r.data.vram_suficiente }
+          : r.data)
+      })
+      .catch(() => {})
+  }
+
+  useEffect(() => {
+    cargar()
+    pollingRef.current = setInterval(refrescarHardware, 5000)
+    return () => clearInterval(pollingRef.current)
+  }, [])
 
   const guardar = async () => {
     setSaving(true)
@@ -112,11 +259,26 @@ export default function Configuracion() {
   }
 
   const setDispositivo = (dispositivo) => {
-    setConfig(c => ({
-      ...c,
-      dispositivo,
-      num_gpu: dispositivo === 'gpu' ? -1 : 0,
-    }))
+    setConfig(c => ({ ...c, dispositivo, num_gpu: dispositivo === 'gpu' ? 999 : 0 }))
+  }
+
+  const setModelo = (modeloId) => {
+    setConfig(c => ({ ...c, modelo: modeloId }))
+  }
+
+  const ejecutarDiagnostico = async () => {
+    setDiagLoading(true)
+    setDiag(null)
+    try {
+      const r = await api.get('/config/diagnostico-gpu')
+      setDiag(r.data)
+      if (r.data.gpu_activa) toast.success('GPU confirmada en uso.')
+      else toast('GPU no detectada activa.', { icon: '⚠️' })
+    } catch {
+      toast.error('Error ejecutando diagnóstico.')
+    } finally {
+      setDiagLoading(false)
+    }
   }
 
   if (loading) return (
@@ -125,16 +287,16 @@ export default function Configuracion() {
     </AppLayout>
   )
 
-  const { gpu, ram, req_modelo, ram_suficiente, vram_suficiente } = data
+  const { gpu, ram, ram_suficiente } = data
   const ramUsada = ram.total_gb - ram.disponible_gb
 
   return (
     <AppLayout>
-      <div className="p-8 max-w-4xl">
+      <div className="p-8 max-w-5xl">
         <div className="flex items-start justify-between mb-8 flex-wrap gap-4">
           <div>
             <h1 className="text-3xl font-black text-white tracking-tight">Configuración de IA</h1>
-            <p className="text-slate-400 mt-1">Ajustá el hardware y modelo según tu equipo</p>
+            <p className="text-slate-400 mt-1">Ajustá el modelo y hardware según tu equipo</p>
           </div>
           <button onClick={guardar} disabled={saving}
             className="px-5 py-2.5 rounded-xl font-bold text-sm disabled:opacity-60 transition-all"
@@ -147,30 +309,21 @@ export default function Configuracion() {
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
 
-          {/* Columna izquierda — Hardware */}
+          {/* ── Columna izquierda: Hardware ──────────────────────────────── */}
           <div className="space-y-4">
 
-            {/* RAM del sistema */}
+            {/* RAM */}
             <Card>
               <CardTitle>🖥️ Memoria RAM del sistema</CardTitle>
-              <RamBar
-                usado={ramUsada}
-                total={ram.total_gb}
-                label="RAM del sistema"
-                color="#22D3EE"
-              />
-              <div className="mt-3 flex items-center justify-between">
-                <span className="text-xs text-slate-400">
-                  Modelo actual requiere ~{req_modelo.ram_gb} GB
-                </span>
-                <StatusBadge ok={ram_suficiente} labelOk="RAM suficiente" labelBad="RAM insuficiente" />
+              <RamBar usado={ramUsada} total={ram.total_gb} label="RAM del sistema" color="#22D3EE" />
+              <div className="mt-3 flex justify-end">
+                <Badge ok={ram_suficiente} labelOk="RAM suficiente" labelBad="RAM insuficiente" />
               </div>
             </Card>
 
             {/* GPU */}
             <Card>
               <CardTitle>⚡ Tarjeta de video (GPU)</CardTitle>
-
               {!gpu.disponible ? (
                 <div className="flex items-center gap-3 p-4 rounded-xl"
                   style={{ background: 'rgba(148,163,184,0.05)', border: '1px solid #2A3A52' }}>
@@ -183,14 +336,21 @@ export default function Configuracion() {
               ) : (
                 <div className="space-y-3">
                   {gpu.gpus.map((g, i) => {
-                    const vramUsada = g.vram_total - g.vram_libre
-                    const vramPct   = (vramUsada / g.vram_total) * 100
-                    const vramColor = vramPct > 85 ? '#F87171' : vramPct > 65 ? '#FACC15' : '#4ADE80'
+                    const vramUsada  = g.vram_total - g.vram_libre
+                    const vramPct    = g.vram_total > 0 ? Math.round((vramUsada / g.vram_total) * 100) : 0
+                    const computoColor = g.uso_pct > 60 ? '#4ADE80' : g.uso_pct > 20 ? '#FACC15' : '#94A3B8'
                     return (
                       <div key={i} className="p-4 rounded-xl" style={{ background: '#1A2235', border: '1px solid #2A3A52' }}>
-                        <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center justify-between mb-2">
                           <div className="font-bold text-sm text-white">{g.nombre}</div>
-                          <span className="text-xs font-mono" style={{ color: '#4ADE80' }}>{g.uso_pct}% uso</span>
+                          <div className="flex items-center gap-3">
+                            <span className="text-xs text-slate-500">
+                              VRAM: <span className="font-mono font-bold text-white">{vramPct}%</span>
+                            </span>
+                            <span className="text-xs text-slate-500">
+                              Cómputo: <span className="font-mono font-bold" style={{ color: computoColor }}>{g.uso_pct}%</span>
+                            </span>
+                          </div>
                         </div>
                         <RamBar
                           usado={vramUsada / 1024}
@@ -198,12 +358,6 @@ export default function Configuracion() {
                           label="VRAM"
                           color="#4ADE80"
                         />
-                        <div className="mt-2 flex items-center justify-between">
-                          <span className="text-xs text-slate-500">
-                            Requiere ~{req_modelo.vram_gb} GB VRAM
-                          </span>
-                          <StatusBadge ok={vramPct < 80} labelOk="VRAM OK" labelBad="VRAM alta" />
-                        </div>
                       </div>
                     )
                   })}
@@ -211,7 +365,7 @@ export default function Configuracion() {
               )}
             </Card>
 
-            {/* Dispositivo CPU / GPU */}
+            {/* Dispositivo */}
             <Card>
               <CardTitle>🔧 Procesamiento</CardTitle>
               <div className="grid grid-cols-2 gap-3">
@@ -250,98 +404,18 @@ export default function Configuracion() {
                 </div>
               )}
             </Card>
-          </div>
 
-          {/* Columna derecha — Modelo */}
-          <div className="space-y-4">
-            <Card>
-              <CardTitle>🧠 Modelo de IA</CardTitle>
-              <div className="space-y-3">
-                {MODELOS.map(m => {
-                  const activo     = config?.modelo === m.id
-                  const instalado  = modelosInstalados.some(n => n.startsWith(m.id.split(':')[0]))
-                  const suficiente = ram.total_gb >= m.ram
-
-                  return (
-                    <button key={m.id}
-                      onClick={() => instalado && setConfig(c => ({ ...c, modelo: m.id }))}
-                      className="w-full p-4 rounded-xl text-left transition-all"
-                      style={{
-                        background: activo ? `${m.tagColor}0D` : '#1A2235',
-                        border: `1.5px solid ${activo ? m.tagColor : '#2A3A52'}`,
-                        opacity: instalado ? 1 : 0.5,
-                        cursor: instalado ? 'pointer' : 'not-allowed',
-                      }}>
-
-                      {/* Header del modelo */}
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="font-bold text-white text-sm">{m.label}</span>
-                          <span className="text-xs px-2 py-0.5 rounded-full font-bold"
-                            style={{ background: `${m.tagColor}18`, color: m.tagColor }}>
-                            {m.tag}
-                          </span>
-                          {activo && (
-                            <span className="text-xs px-2 py-0.5 rounded-full font-bold"
-                              style={{ background: 'rgba(255,255,255,0.06)', color: '#fff' }}>
-                              ✓ Activo
-                            </span>
-                          )}
-                        </div>
-                        {/* Estado de instalación */}
-                        <span className="text-xs font-semibold flex-shrink-0 ml-2"
-                          style={{ color: instalado ? '#4ADE80' : '#F87171' }}>
-                          {instalado ? '● Instalado' : '○ No instalado'}
-                        </span>
-                      </div>
-
-                      {/* Descripción */}
-                      <p className="text-xs text-slate-400 mb-3 leading-relaxed">{m.desc}</p>
-
-                      {/* Fortalezas */}
-                      <div className="flex flex-wrap gap-1.5 mb-3">
-                        {m.fortalezas.map(f => (
-                          <span key={f} className="text-xs px-2 py-0.5 rounded-lg"
-                            style={{ background: 'rgba(255,255,255,0.04)', color: '#94A3B8', border: '1px solid #2A3A52' }}>
-                            {f}
-                          </span>
-                        ))}
-                      </div>
-
-                      {/* RAM + advertencia */}
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-mono text-slate-600">
-                          RAM: {m.ram} GB · VRAM: {m.vram} GB
-                        </span>
-                        {!suficiente && instalado && (
-                          <span className="text-xs font-bold" style={{ color: '#FACC15' }}>
-                            ⚠ RAM ajustada
-                          </span>
-                        )}
-                        {!instalado && (
-                          <code className="text-xs font-mono" style={{ color: '#94A3B8' }}>
-                            ollama pull {m.id}
-                          </code>
-                        )}
-                      </div>
-                    </button>
-                  )
-                })}
-              </div>
-            </Card>
-
-            {/* Resumen de config actual */}
+            {/* Resumen config activa */}
             <Card style={{ background: 'rgba(34,211,238,0.03)', border: '1px solid rgba(34,211,238,0.15)' }}>
               <CardTitle>📋 Configuración activa</CardTitle>
-              <div className="space-y-2.5">
+              <div className="space-y-2">
                 {[
                   { label: 'Modelo',        value: config?.modelo },
                   { label: 'Dispositivo',   value: config?.dispositivo?.toUpperCase() },
                   { label: 'Threads CPU',   value: config?.dispositivo === 'cpu' ? config?.num_threads : '—' },
-                  { label: 'Capas GPU',     value: config?.dispositivo === 'gpu' ? 'Todas (-1)' : '—' },
-                  { label: 'RAM disponible', value: `${ram.disponible_gb.toFixed(1)} GB` },
+                  { label: 'RAM disponible', value: `${ram.disponible_gb?.toFixed(1)} GB` },
                 ].map(item => (
-                  <div key={item.label} className="flex justify-between items-center py-2"
+                  <div key={item.label} className="flex justify-between items-center py-1.5"
                     style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
                     <span className="text-xs text-slate-500">{item.label}</span>
                     <span className="text-xs font-mono font-bold text-white">{item.value}</span>
@@ -351,9 +425,87 @@ export default function Configuracion() {
             </Card>
           </div>
 
+          {/* ── Columna derecha: Modelos ──────────────────────────────────── */}
+          <div className="space-y-4">
+            <Card>
+              <CardTitle>🧠 Modelo de IA</CardTitle>
+              <div className="space-y-3">
+                {MODELOS.map(m => {
+                  const activo    = config?.modelo === m.id
+                  const instalado = modelosInstalados.some(n =>
+                    n.toLowerCase().startsWith(m.id.split(':')[0].toLowerCase())
+                  )
+
+                  return (
+                    <div key={m.id}>
+                      <button
+                        onClick={() => setModelo(m.id)}
+                        className="w-full p-4 rounded-xl text-left transition-all"
+                        style={{
+                          background: activo ? `${m.tagColor}0D` : '#1A2235',
+                          border: `1.5px solid ${activo ? m.tagColor : '#2A3A52'}`,
+                        }}>
+
+                        {/* Header */}
+                        <div className="flex items-start justify-between gap-2 mb-2">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-bold text-white text-sm">{m.label}</span>
+                            <span className="text-xs px-2 py-0.5 rounded-full font-bold"
+                              style={{ background: m.tagColor + '18', color: m.tagColor }}>
+                              {m.tag}
+                            </span>
+                            {activo && (
+                              <span className="text-xs px-2 py-0.5 rounded-full font-bold"
+                                style={{ background: 'rgba(255,255,255,0.07)', color: '#fff' }}>
+                                ✓ Activo
+                              </span>
+                            )}
+                          </div>
+                          <span className="text-xs font-semibold flex-shrink-0"
+                            style={{ color: instalado ? '#4ADE80' : '#94A3B8' }}>
+                            {instalado ? '● Instalado' : '○ No instalado'}
+                          </span>
+                        </div>
+
+                        {/* Desc */}
+                        <p className="text-xs text-slate-400 mb-3 leading-relaxed">{m.desc}</p>
+
+                        {/* Fortalezas */}
+                        <div className="flex flex-wrap gap-1.5 mb-3">
+                          {m.fortalezas.map(f => (
+                            <span key={f} className="text-xs px-2 py-0.5 rounded-lg"
+                              style={{ background: 'rgba(255,255,255,0.04)', color: '#94A3B8', border: '1px solid #2A3A52' }}>
+                              {f}
+                            </span>
+                          ))}
+                        </div>
+
+                        {/* Hardware reqs (mini) */}
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="font-mono text-slate-600">
+                            RAM {m.ram_gb}GB · VRAM {m.vram_gb}GB · {m.tokens} tokens
+                          </span>
+                        </div>
+                      </button>
+
+                      {/* Panel de compatibilidad — solo si es el modelo activo/seleccionado */}
+                      {activo && (
+                        <HardwareCheck
+                          modelo={config?.modelo}
+                          gpu={gpu}
+                          ram={ram}
+                          dispositivo={config?.dispositivo}
+                        />
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            </Card>
+          </div>
         </div>
 
-        {/* Panel diagnóstico GPU */}
+        {/* ── Diagnóstico GPU ───────────────────────────────────────────────── */}
         {config?.dispositivo === 'gpu' && (
           <Card className="mt-6">
             <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
@@ -369,62 +521,48 @@ export default function Configuracion() {
 
             {!diag && !diagLoading && (
               <p className="text-sm text-slate-500">
-                Hacé click en "Probar GPU ahora" para verificar si Ollama realmente está usando la GPU.
-                El test hace una inferencia mínima y mide el uso de GPU antes y después.
+                Hace click en "Probar GPU ahora" para verificar si Ollama está usando la GPU.
+                El test hace una inferencia mínima y verifica VRAM asignada.
               </p>
             )}
 
             {diagLoading && (
               <div className="flex items-center gap-3 text-slate-400 text-sm">
-                <Spinner size={5} /> Ejecutando inferencia de prueba, esperá unos segundos...
+                <Spinner size={5} /> Ejecutando inferencia de prueba...
               </div>
             )}
 
             {diag && (
               <div className="space-y-4">
-                {/* Resultado principal */}
                 <div className="flex items-start gap-4 p-4 rounded-xl"
-                  style={{ background: diag.gpu_activa ? 'rgba(74,222,128,0.06)' : 'rgba(248,113,113,0.06)',
-                           border: `1px solid ${diag.gpu_activa ? 'rgba(74,222,128,0.2)' : 'rgba(248,113,113,0.2)'}` }}>
+                  style={{
+                    background: diag.gpu_activa ? 'rgba(74,222,128,0.06)' : 'rgba(248,113,113,0.06)',
+                    border: `1px solid ${diag.gpu_activa ? 'rgba(74,222,128,0.2)' : 'rgba(248,113,113,0.2)'}`,
+                  }}>
                   <span className="text-3xl flex-shrink-0">{diag.gpu_activa ? '✅' : '⚠️'}</span>
                   <div>
                     <div className="font-bold text-white mb-1">{diag.mensaje}</div>
-                    {diag.solucion && (
-                      <div className="text-xs text-slate-400 mt-2 leading-relaxed">
-                        <strong className="text-yellow-400">Pasos para habilitar GPU:</strong>
-                        <br />{diag.solucion}
-                      </div>
+                    {diag.pasos_solucion && (
+                      <ol className="text-xs text-slate-400 mt-2 space-y-1 list-decimal list-inside">
+                        {diag.pasos_solucion.map((p, i) => <li key={i}>{p}</li>)}
+                      </ol>
                     )}
                   </div>
                 </div>
 
-                {/* Métricas */}
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
                   {[
-                    { label: 'Dispositivo config', value: diag.dispositivo_config?.toUpperCase(), color: '#22D3EE' },
-                    { label: 'Tiempo respuesta',   value: `${diag.tiempo_respuesta_s}s`,          color: '#A78BFA' },
-                    { label: 'GPU uso antes',      value: `${diag.gpu_uso_antes_pct}%`,            color: '#94A3B8' },
-                    { label: 'GPU uso durante',    value: `${diag.gpu_uso_despues_pct}%`,          color: diag.gpu_activa ? '#4ADE80' : '#F87171' },
-                  ].map(m => (
-                    <div key={m.label} className="p-3 rounded-xl text-center"
+                    { label: 'Tiempo respuesta', value: diag.tiempo_respuesta_s + 's', color: '#A78BFA' },
+                    { label: 'VRAM asignada',    value: diag.ollama_vram_mb ? diag.ollama_vram_mb + ' MB' : '—', color: diag.gpu_activa ? '#4ADE80' : '#F87171' },
+                    { label: 'Dispositivo',      value: diag.dispositivo_config?.toUpperCase(), color: '#22D3EE' },
+                  ].map(item => (
+                    <div key={item.label} className="p-3 rounded-xl text-center"
                       style={{ background: '#1A2235', border: '1px solid #2A3A52' }}>
-                      <div className="text-lg font-black font-mono mb-1" style={{ color: m.color }}>{m.value}</div>
-                      <div className="text-xs text-slate-500">{m.label}</div>
+                      <div className="text-lg font-black font-mono mb-1" style={{ color: item.color }}>{item.value}</div>
+                      <div className="text-xs text-slate-500">{item.label}</div>
                     </div>
                   ))}
                 </div>
-
-                {/* Tip CUDA */}
-                {!diag.gpu_activa && (
-                  <div className="p-4 rounded-xl text-xs leading-relaxed"
-                    style={{ background: 'rgba(250,204,21,0.05)', border: '1px solid rgba(250,204,21,0.15)', color: '#FCD34D' }}>
-                    <strong>¿Cómo verificar manualmente?</strong> Mientras corre un análisis, abrí una nueva terminal y ejecutá:
-                    <code className="block mt-2 p-2 rounded-lg bg-black/30 font-mono text-green-400">
-                      nvidia-smi
-                    </code>
-                    Si Ollama usa GPU, vas a ver el proceso "ollama_llama_s" en la lista con VRAM asignada.
-                  </div>
-                )}
               </div>
             )}
           </Card>

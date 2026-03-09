@@ -7,6 +7,7 @@ from pydantic_settings import BaseSettings
 from pydantic import Field
 from pathlib import Path
 from functools import lru_cache
+from typing import Optional
 
 
 class Settings(BaseSettings):
@@ -42,8 +43,9 @@ class Settings(BaseSettings):
     ALLOWED_EXTENSIONS: str = "pdf"
 
     # ── Admin por defecto ─────────────────────────────────────────────────
+    # Si no se define en .env, seed genera una contraseña aleatoria al primer inicio
     ADMIN_USERNAME: str = "admin"
-    ADMIN_PASSWORD: str = "Admin@2025!"
+    ADMIN_PASSWORD: Optional[str] = None
 
     @property
     def BASE_DIR(self) -> Path:

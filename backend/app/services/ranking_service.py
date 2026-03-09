@@ -12,6 +12,7 @@ def obtener_ranking(proceso_id: int, db: Session) -> list[dict]:
     """
     Retorna lista de candidatos ordenados por puntaje descendente.
     Candidatos sin análisis van al final.
+    Usa una sola query con IN para evitar N+1.
     """
     candidatos = (
         db.query(Candidato)
@@ -19,9 +20,14 @@ def obtener_ranking(proceso_id: int, db: Session) -> list[dict]:
         .all()
     )
 
+    # Una sola query para todos los análisis (evita N+1)
+    candidato_ids = [c.id for c in candidatos]
+    analisis_list = db.query(Analisis).filter(Analisis.candidato_id.in_(candidato_ids)).all()
+    analisis_map  = {a.candidato_id: a for a in analisis_list}
+
     items = []
     for c in candidatos:
-        analisis = db.query(Analisis).filter(Analisis.candidato_id == c.id).first()
+        analisis = analisis_map.get(c.id)
         items.append({
             "candidato": c,
             "analisis":  analisis,

@@ -2,8 +2,8 @@
   "dispositivo": "gpu",
   "num_gpu": -1,
   "num_threads": 4,
-  "modelo": "qwen2.5:14b",
-  "max_tokens": 2500,
+  "modelo": "qwen2.5:7b",
+  "max_tokens": 900,
   "temperature": 0,
   "seed": 42
 }

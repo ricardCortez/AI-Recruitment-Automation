@@ -2,8 +2,10 @@
 Endpoints de autenticación: login, logout, cambio de clave, recuperación, 2FA.
 """
 
+import time
+from collections import defaultdict
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
 
 from app.db.database import get_db
@@ -22,9 +24,30 @@ from app.schemas.auth import (
 
 router = APIRouter()
 
+# ── Rate limiting simple en memoria ──────────────────────────────────────────
+_login_intentos: dict[str, list[float]] = defaultdict(list)
+_MAX_INTENTOS   = 10    # máximo de intentos por ventana
+_VENTANA_SEG    = 60    # ventana de 60 segundos
+
+
+def _verificar_rate_limit(identifier: str):
+    """Bloquea si se superan MAX_INTENTOS en VENTANA_SEG segundos."""
+    ahora   = time.time()
+    recents = [t for t in _login_intentos[identifier] if ahora - t < _VENTANA_SEG]
+    _login_intentos[identifier] = recents
+    if len(recents) >= _MAX_INTENTOS:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Demasiados intentos de login. Esperá 1 minuto.",
+        )
+    _login_intentos[identifier].append(ahora)
+
 
 @router.post("/login", response_model=TokenResponse)
-def login(data: LoginRequest, db: Session = Depends(get_db)):
+def login(data: LoginRequest, request: Request, db: Session = Depends(get_db)):
+    # Aplicar rate limit por IP
+    client_ip = request.client.host if request.client else "unknown"
+    _verificar_rate_limit(client_ip)
     user = db.query(User).filter(User.username == data.username.lower()).first()
 
     if not user or not verify_password(data.password, user.hashed_password):

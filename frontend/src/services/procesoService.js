@@ -15,12 +15,13 @@ export const procesoService = {
 }
 
 export const cvsService = {
-  subirCVs:  (procesoId, formData) =>
+  subirCVs: (procesoId, formData) =>
     api.post(`/cvs/${procesoId}/upload`, formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     }),
-  analizar:  (procesoId)   => api.post(`/cvs/${procesoId}/analizar`),
-  estado:    (procesoId)   => api.get(`/cvs/${procesoId}/estado`),
+  analizar:  (procesoId) => api.post(`/cvs/${procesoId}/analizar`),
+  cancelar:  (procesoId) => api.post(`/cvs/${procesoId}/cancelar`),
+  estado:    (procesoId) => api.get(`/cvs/${procesoId}/estado`),
 }
 
 export const reportesService = {
