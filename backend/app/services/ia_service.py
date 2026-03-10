@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-Motor de IA — v4
-- Tokens por modelo: 7b sube a 2500 (es mas verboso con CVs tecnicos largos)
-- Retry automatico: si JSON falla, reintenta con prompt minimo de rescate
-- Normalizacion de "cumple": acepta "cumple"/"no cumple"/"parcialmente" ademas de si/parcial/no
-- _reparar_json mejorado: maneja truncado mid-string
+Motor de IA — v5
+- Valoracion de excedente: candidatos que superan lo requerido obtienen puntajes 90-100
+- Descripcion explicita del excedente en cada criterio
+- Resumen con "VALOR AGREGADO" cuando el candidato supera requisitos
+- Tokens y retry sin cambios respecto a v4
 """
 
 import json
@@ -15,19 +15,17 @@ from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-# Parametros por modelo: num_predict = tokens de salida, num_ctx = ventana total
 MODELO_PARAMS = {
     "llama3.1:8b":  {"num_predict": 1400, "num_ctx": 4096, "verboso": False},
-    "qwen2.5:7b":   {"num_predict": 2500, "num_ctx": 4096, "verboso": True},   # 7b muy verboso
+    "qwen2.5:7b":   {"num_predict": 2500, "num_ctx": 4096, "verboso": True},
     "qwen2.5:14b":  {"num_predict": 1400, "num_ctx": 4096, "verboso": False},
     "qwen2.5:32b":  {"num_predict": 1400, "num_ctx": 4096, "verboso": False},
 }
 
-_INST_CORTA  = " Descripciones MUY CORTAS: max 6 palabras por criterio."
-_INST_NORMAL = " Descripciones concisas: max 12 palabras por criterio."
+_INST_CORTA  = " Descripciones MUY CORTAS: max 8 palabras por criterio."
+_INST_NORMAL = " Descripciones concisas: max 14 palabras por criterio."
 
-PROMPT_COMPLETO = """Eres un evaluador experto en RRHH. Debes evaluar con MAXIMA PRECISION y RIGOR el CV vs los requisitos del puesto.
-REGLA DE ORO: cada candidato recibe el puntaje que REALMENTE merece segun su CV. NO nivelar todos en rangos similares.{instruccion}
+PROMPT_COMPLETO = """Eres un evaluador experto en RRHH. Tu tarea es evaluar con MAXIMA PRECISION el CV vs los requisitos del puesto.{instruccion}
 Responde SOLO JSON valido, sin markdown ni texto extra.
 
 PUESTO: {nombre_puesto}
@@ -37,44 +35,77 @@ REQUISITOS EXACTOS DEL PUESTO:
 CV DEL CANDIDATO:
 {texto_cv}
 
+═══════════════════════════════════════════════════════════════
+PRINCIPIO FUNDAMENTAL — LEE ESTO ANTES DE EVALUAR:
+Un candidato que tiene MAS de lo requerido es MAS VALIOSO que uno
+que solo cumple exactamente. Tener experiencia adicional, certificaciones
+extra, habilidades adicionales relevantes o conocimientos que van mas alla
+de lo pedido AUMENTA el puntaje. No penalices el excedente: premialo.
+═══════════════════════════════════════════════════════════════
+
+ESCALA DE PUNTAJE 0-100 (aplica criterio por criterio):
+
+  100    = EXCEDE MUY AMPLIAMENTE: tiene el doble o mas de lo pedido.
+           Ej: piden 3 anos → tiene 10+; piden 1 idioma → tiene 3; piden 1 cert → tiene 4+
+  90-99  = EXCEDE NOTABLEMENTE: tiene significativamente mas de lo requerido.
+           Ej: piden 3 anos → tiene 6-9; piden intermedio → tiene avanzado certificado
+  80-89  = SUPERA LO REQUERIDO: cumple todo y tiene algo extra relevante.
+           Ej: piden 3 anos → tiene 4-5; pide tecnico → tiene licenciatura + experiencia
+  70-79  = CUMPLE EXACTAMENTE: satisface los requisitos del criterio sin excedente notable.
+  55-69  = CUMPLE PARCIALMENTE: cumple los puntos principales pero falta algo secundario.
+  35-54  = CUMPLE A MEDIAS: brechas importantes, cumple menos de la mitad.
+  10-34  = CUMPLE POCO: tiene algo relacionado pero hay brechas criticas.
+   0-9   = NO CUMPLE: no tiene lo que se pide o es completamente irrelevante.
+
+REGLAS CRITICAS:
+1. Si el candidato tiene MAS anos de experiencia que los requeridos → puntaje MAYOR que 70.
+   Formula orientativa: puntaje_experiencia = min(100, 70 + (anos_extra / anos_requeridos) * 30)
+2. Si el candidato tiene certificaciones o titulos ADICIONALES relevantes al puesto → sube el puntaje del criterio correspondiente.
+3. Si domina herramientas/tecnologias ADICIONALES a las pedidas y son utiles para el puesto → sube el puntaje.
+4. Si el nivel de idioma SUPERA lo requerido (ej: pide B2, tiene C1/nativo) → puntaje 90+.
+5. El excedente debe mencionarse SIEMPRE en la descripcion del criterio.
+6. No todas las personas pueden tener puntaje similar: diferencia a los candidatos claramente.
+
 INSTRUCCIONES PASO A PASO:
 
-PASO 1 — Define los criterios principales agrupando los requisitos (ej: Experiencia, Conocimientos Tecnicos, Funciones, Idiomas).
+PASO 1 — Agrupa los requisitos en criterios principales (ej: Experiencia, Formacion Academica, Conocimientos Tecnicos, Idiomas, etc.).
 
 PASO 2 — Asigna PESO a cada criterio segun su importancia para el puesto. Todos los pesos deben sumar exactamente 100.
 
-PASO 3 — Para cada criterio, compara LITERALMENTE lo que pide el requisito vs lo que tiene el candidato:
-  - Lee el requisito palabra por palabra
-  - Busca en el CV si cumple CADA punto del requisito
-  - Asigna PUNTAJE 0-100 con esta escala ESTRICTA:
-      95-100 = supera ampliamente (ej: pide 3-4 anos, tiene 8+; pide intermedio, tiene avanzado)
-      80-94  = cumple bien la mayoria de puntos del criterio
-      65-79  = cumple los puntos principales pero falta alguno secundario
-      45-64  = cumple parcialmente, faltan puntos importantes
-      20-44  = brechas importantes, cumple menos de la mitad
-      0-19   = no cumple o casi no tiene lo que se pide
+PASO 3 — Para cada criterio:
+  a) Lee LITERALMENTE lo que pide el requisito.
+  b) Busca en el CV todo lo que el candidato tiene relacionado a ese criterio.
+  c) Determina si cumple, cumple parcial, no cumple O si EXCEDE lo requerido.
+  d) Asigna el puntaje usando la escala de arriba (premia el excedente).
+  e) En descripcion: menciona lo hallado Y si supera el requisito, indica cuanto supera.
+     Ejemplos de descripcion con excedente:
+       "10 anos en TI vs 3 pedidos, jefatura en 2 empresas" 
+       "Python+SQL+Spark, pide solo Python y SQL — extras valorables"
+       "Ingles C2 nativo vs B2 requerido — supera ampliamente"
+       "MBA + Licenciatura vs Licenciatura requerida"
 
-PASO 4 — puntaje_total = suma exacta de (peso_i * puntaje_i / 100) para todos los criterios.
-  VERIFICA que el calculo sea correcto antes de responder.
+PASO 4 — puntaje_total = suma exacta de (peso_i * puntaje_i / 100).
+  VERIFICA el calculo antes de responder.
 
 PASO 5 — cumple: "si" si puntaje>=70 | "parcial" si 40-69 | "no" si <40
 
-PASO 6 — descripcion: UNA sola frase corta (max 10 palabras) describiendo lo hallado en el CV para ese criterio. Ejemplos: "8 anos en TI, jefatura en empresas medianas" / "Inglés avanzado certificado" / "Sin experiencia en instituciones educativas".
-
-PASO 7 — resumen: primera palabra "APTO" o "NO APTO", luego fortalezas y brechas especificas del CV.
+PASO 6 — resumen: empieza con "APTO", "APTO CON RESERVAS" o "NO APTO".
+  Menciona explicitamente si el candidato supera requisitos con la frase "VALOR AGREGADO:" seguida de que aporta extra.
+  Ejemplo: "APTO — VALOR AGREGADO: 10 anos de exp (pide 3), certificaciones AWS adicionales, ingles nativo."
 
 JSON exacto (sin texto antes ni despues):
-{{"nombre":"<str|null>","email":"<str|null>","telefono":"<str|null>","puntaje_total":<0-100>,"criterios":[{{"criterio":"<str>","peso":<0-100>,"puntaje":<0-100>,"cumple":"<si|parcial|no>","descripcion":"<frase corta de lo hallado en el CV>"}}],"resumen":"<APTO/NO APTO: fortalezas y brechas>"}}"""
+{{"nombre":"<str|null>","email":"<str|null>","telefono":"<str|null>","puntaje_total":<0-100>,"criterios":[{{"criterio":"<str>","peso":<0-100>,"puntaje":<0-100>,"cumple":"<si|parcial|no>","descripcion":"<frase con excedente si aplica>"}}],"resumen":"<APTO/NO APTO: fortalezas, brechas y valor agregado>"}}"""
 
-# Prompt minimo de rescate — usado en retry cuando el JSON del primer intento falla
+
 PROMPT_RESCATE = """Evalua este CV para el puesto. Responde SOLO con JSON valido. Sin texto extra.
+IMPORTANTE: si el candidato tiene MAS de lo requerido en algun criterio, asigna puntaje > 70 (puede llegar a 100).
 
 PUESTO: {nombre_puesto}
 REQUISITOS: {requisitos_cortos}
 CV (resumen): {cv_corto}
 
-JSON (peso=importancia del criterio, puntaje=0-100 cumplimiento, puntaje_total=suma(peso*puntaje/100)):
-{{"nombre":"<str>","email":"<str>","telefono":"<str>","puntaje_total":<0-100>,"criterios":[{{"criterio":"<str>","peso":<0-100>,"puntaje":<0-100>,"cumple":"<si|parcial|no>","descripcion":"<breve>"}}],"resumen":"<APTO/NO APTO: razon>"}}"""
+JSON (peso=importancia, puntaje=0-100 donde >70 significa supera requisito, puntaje_total=suma(peso*puntaje/100)):
+{{"nombre":"<str>","email":"<str>","telefono":"<str>","puntaje_total":<0-100>,"criterios":[{{"criterio":"<str>","peso":<0-100>,"puntaje":<0-100>,"cumple":"<si|parcial|no>","descripcion":"<breve, indica si supera requisito>"}}],"resumen":"<APTO/NO APTO: razon y valor agregado si aplica>"}}"""
 
 
 def _params_modelo(modelo: str) -> dict:
@@ -88,13 +119,11 @@ def _params_modelo(modelo: str) -> dict:
 
 def _get_opciones(max_ctx: int = 4096) -> dict:
     total_logicos = os.cpu_count() or 4
-    # Threads optimos por defecto: todos los hilos logicos menos 2 para el SO
     optimo_default = max(total_logicos - 2, 2)
     try:
         from app.api.config import leer_config
         cfg = leer_config()
         dispositivo = cfg.get("dispositivo", "cpu")
-        # Usar el valor del config pero nunca menos que el optimo del hardware real
         threads = max(cfg.get("num_threads", optimo_default), optimo_default)
         if dispositivo == "gpu":
             return {"temperature": 0, "seed": 42, "num_gpu": 999,
@@ -178,7 +207,6 @@ def _llamar_ollama(prompt: str, nombre_puesto: str = "", requisitos: str = "", t
         return _parsear(texto)
 
     except (RuntimeError, ValueError) as e:
-        # Si el error es de conexion/modelo, no reintentar
         msg = str(e).lower()
         if "ollama no responde" in msg or "no descargado" in msg or "base" in msg or "vacia" in msg:
             raise RuntimeError("Error Ollama: {}".format(e))
@@ -192,9 +220,8 @@ def _llamar_ollama(prompt: str, nombre_puesto: str = "", requisitos: str = "", t
             raise RuntimeError("Modelo '{}' no descargado.".format(settings.OLLAMA_MODEL))
         logger.warning("  Intento 1 fallido (%s) — reintentando con prompt de rescate...", e)
 
-    # ── Intento 2: prompt minimo de rescate ──────────────────────────────────
+    # ── Intento 2: prompt de rescate ─────────────────────────────────────────
     try:
-        # Prompt mucho mas corto: menos tokens de entrada = mas tokens disponibles para salida
         req_cortos = requisitos[:300] if len(requisitos) > 300 else requisitos
         cv_corto   = texto_cv[:500]   if len(texto_cv)   > 500  else texto_cv
 
@@ -206,7 +233,7 @@ def _llamar_ollama(prompt: str, nombre_puesto: str = "", requisitos: str = "", t
 
         ctx_rescate = min(len(prompt_rescate) // 3 + 1000 + 128, max_ctx)
         opts_rescate = _get_opciones(max_ctx=ctx_rescate)
-        opts_rescate["num_predict"] = 1000  # suficiente para JSON minimo
+        opts_rescate["num_predict"] = 1000
 
         logger.info("  Rescate: ctx=%s tokens=1000 prompt_chars=%s", ctx_rescate, len(prompt_rescate))
 
@@ -218,7 +245,7 @@ def _llamar_ollama(prompt: str, nombre_puesto: str = "", requisitos: str = "", t
         texto2 = r2["message"]["content"].strip()
         logger.info("  Rescate respuesta: %s chars", len(texto2))
         resultado = _parsear(texto2)
-        resultado["_rescate"] = True  # marcar que fue el intento de rescate
+        resultado["_rescate"] = True
         return resultado
 
     except Exception as e2:
@@ -247,25 +274,17 @@ def _llamar_openai(prompt: str) -> dict:
 
 
 def _reparar_json(texto: str) -> str:
-    """
-    Intenta reparar JSON invalido o truncado.
-    Cubre: truncado al final, cadena sin cerrar, criterio incompleto.
-    """
     reparado = texto.rstrip()
     if not reparado:
         return reparado
 
-    # 1. Cerrar cadena abierta (numero impar de comillas en los ultimos 300 chars)
     zona = reparado[-300:] if len(reparado) > 300 else reparado
-    # Contar comillas no escapadas
     comillas = len(re.findall(r'(?<!\\)"', zona))
     if comillas % 2 != 0:
         reparado += '"'
 
-    # 2. Limpiar trailing incompleto
     reparado = reparado.rstrip().rstrip(',').rstrip(':').rstrip(',')
 
-    # 3. Eliminar criterio incompleto (tiene "criterio" pero le faltan "cumple" o "puntaje")
     ultimo_criterio = reparado.rfind('"criterio"')
     if ultimo_criterio > 0:
         fragmento = reparado[ultimo_criterio:]
@@ -274,12 +293,10 @@ def _reparar_json(texto: str) -> str:
             if inicio > 0:
                 reparado = reparado[:inicio].rstrip(',').rstrip()
 
-    # 4. Cerrar estructuras abiertas
     faltan_c = max(0, reparado.count('[') - reparado.count(']'))
     faltan_l = max(0, reparado.count('{') - reparado.count('}'))
     reparado += ']' * faltan_c + '}' * faltan_l
 
-    # 5. Inyectar "resumen" si falta despues de reparar
     try:
         parcial = json.loads(reparado)
         if "resumen" not in parcial:
@@ -290,7 +307,6 @@ def _reparar_json(texto: str) -> str:
     return reparado
 
 
-# Mapa de valores de "cumple" que el modelo puede devolver -> normalizados
 _CUMPLE_MAP = {
     "si": "si", "sí": "si", "cumple": "si", "yes": "si", "true": "si", "1": "si",
     "no": "no", "no cumple": "no", "false": "no", "0": "no",
