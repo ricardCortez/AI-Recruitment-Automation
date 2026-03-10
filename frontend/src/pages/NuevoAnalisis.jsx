@@ -4,7 +4,7 @@ import { useDropzone } from 'react-dropzone'
 import { procesoService, cvsService } from '../services/procesoService'
 import { useAnalisis } from '../context/AnalisisContext'
 import AppLayout from '../components/layout/AppLayout'
-import { Card, CardTitle, Spinner } from '../components/ui/index.jsx'
+import { Card, CardTitle, Spinner, PageContainer } from '../components/ui/index.jsx'
 import toast from 'react-hot-toast'
 import api from '../services/api'
 
@@ -269,7 +269,7 @@ export default function NuevoAnalisis() {
 
     return (
       <AppLayout>
-        <div className="p-8 max-w-2xl mx-auto">
+        <PageContainer size="sm">
 
           <div className="text-center mb-8">
             {paso === 'analizando' && !cancelado ? (
@@ -397,7 +397,7 @@ export default function NuevoAnalisis() {
               </button>
             </div>
           )}
-        </div>
+        </PageContainer>
       </AppLayout>
     )
   }
@@ -405,7 +405,7 @@ export default function NuevoAnalisis() {
   // ── Vista: Formulario ──────────────────────────────────────────────────────
   return (
     <AppLayout>
-      <div className="p-8 max-w-5xl">
+      <PageContainer size="lg">
         <div className="flex items-start justify-between mb-8 flex-wrap gap-4">
           <div>
             <h1 className="text-3xl font-black text-white tracking-tight">Nuevo proceso de selección</h1>
@@ -490,7 +490,7 @@ export default function NuevoAnalisis() {
             </button>
           </div>
         </div>
-      </div>
+      </PageContainer>
     </AppLayout>
   )
 }

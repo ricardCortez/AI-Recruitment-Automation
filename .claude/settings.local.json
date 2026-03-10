@@ -9,7 +9,11 @@
       "Bash(./venv/Scripts/python.exe -c \"import PyPDF2; print\\(''PyPDF2 OK''\\)\")",
       "Bash(./venv/Scripts/python.exe -c \"import fitz; print\\(''fitz/pymupdf OK''\\)\")",
       "Bash(./venv/Scripts/python.exe -c \"import main\")",
-      "Bash(./venv/Scripts/python.exe -m uvicorn main:app --host 127.0.0.1 --port 8000)"
+      "Bash(./venv/Scripts/python.exe -m uvicorn main:app --host 127.0.0.1 --port 8000)",
+      "Bash(\"d:/Archivos/Desarrollo/Proyects/AI-Recruitment-Automation/detener.bat\":*)",
+      "Bash(python3 -c \":*)",
+      "Bash(python3:*)",
+      "Bash(cmd.exe /c \"type d:\\\\Archivos\\\\Desarrollo\\\\Proyects\\\\AI-Recruitment-Automation\\\\detener.bat\")"
     ]
   }
 }

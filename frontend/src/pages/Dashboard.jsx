@@ -174,20 +174,21 @@ export default function Dashboard() {
 
   return (
     <AppLayout>
-      <div className="p-8 max-w-7xl">
+      {/* Contenedor principal: centrado horizontalmente con max-width y padding responsive */}
+      <div className="w-full max-w-7xl mx-auto px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
 
         {/* Header */}
-        <div className="flex items-center justify-between mb-8 flex-wrap gap-4">
+        <div className="flex items-center justify-between mb-6 sm:mb-8 flex-wrap gap-3">
           <div>
-            <h1 className="text-3xl font-black text-white tracking-tight">Dashboard</h1>
-            <p className="text-slate-400 mt-1">
+            <h1 className="text-2xl sm:text-3xl font-black text-white tracking-tight">Dashboard</h1>
+            <p className="text-slate-400 mt-1 text-sm">
               Bienvenido, <span className="text-white font-semibold">{user?.nombre_completo}</span>
             </p>
           </div>
-          <div className="flex items-center gap-3 flex-wrap">
+          <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
             <OllamaBadge status={ollamaStatus} />
             <button onClick={() => navigate('/nuevo-analisis')}
-              className="px-4 py-2 rounded-xl text-sm font-bold transition-all"
+              className="px-3 sm:px-4 py-2 rounded-xl text-sm font-bold transition-all"
               style={{ background: '#22D3EE', color: '#0A0F1A' }}
               onMouseEnter={e => e.currentTarget.style.filter = 'brightness(1.08)'}
               onMouseLeave={e => e.currentTarget.style.filter = ''}>
@@ -196,8 +197,8 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Stats */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+        {/* Stats — 2 columnas en móvil, 4 en desktop */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6 sm:mb-8">
           <StatCard icon="📂" label="Procesos"       value={procesos.length}  sub="Total histórico"       color="#22D3EE" />
           <StatCard icon="👤" label="CVs analizados" value={totalCandidatos}  sub="En todos los procesos" color="#4ADE80" />
           <StatCard icon="✅" label="Finalizados"    value={finalizados}      sub="Análisis completos"    color="#A78BFA" />
@@ -233,15 +234,18 @@ export default function Dashboard() {
               }
             />
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full">
+            <div className="overflow-x-auto -mx-1">
+              <table className="w-full min-w-[560px]">
                 <thead>
                   <tr>
-                    {['Puesto', 'CVs', 'Fecha', 'Hora', 'Duración', 'Estado', 'Acciones'].map(h => (
-                      <th key={h} className="text-left text-xs font-bold text-slate-600 uppercase tracking-widest pb-4 pr-4 whitespace-nowrap">
-                        {h}
-                      </th>
-                    ))}
+                    {/* Puesto y CVs siempre visibles; Fecha/Hora/Duración se ocultan en móvil */}
+                    <th className="text-left text-xs font-bold text-slate-600 uppercase tracking-widest pb-4 pr-4 whitespace-nowrap">Puesto</th>
+                    <th className="text-left text-xs font-bold text-slate-600 uppercase tracking-widest pb-4 pr-4 whitespace-nowrap">CVs</th>
+                    <th className="text-left text-xs font-bold text-slate-600 uppercase tracking-widest pb-4 pr-4 whitespace-nowrap hidden sm:table-cell">Fecha</th>
+                    <th className="text-left text-xs font-bold text-slate-600 uppercase tracking-widest pb-4 pr-4 whitespace-nowrap hidden md:table-cell">Hora</th>
+                    <th className="text-left text-xs font-bold text-slate-600 uppercase tracking-widest pb-4 pr-4 whitespace-nowrap hidden md:table-cell">Duración</th>
+                    <th className="text-left text-xs font-bold text-slate-600 uppercase tracking-widest pb-4 pr-4 whitespace-nowrap">Estado</th>
+                    <th className="text-left text-xs font-bold text-slate-600 uppercase tracking-widest pb-4 whitespace-nowrap">Acciones</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#1A2235]">
@@ -254,8 +258,8 @@ export default function Dashboard() {
                       <tr key={p.id} className="group hover:bg-white/[0.02] transition-colors">
 
                         {/* Puesto */}
-                        <td className="py-3.5 pr-4">
-                          <div className="flex items-center gap-2">
+                        <td className="py-3 pr-4">
+                          <div className="flex items-center gap-2 flex-wrap">
                             <button onClick={() => navigate('/resultados/' + p.id)}
                               className="font-semibold text-white text-sm hover:text-cyan-400 transition-colors text-left">
                               {p.nombre_puesto}
@@ -270,25 +274,25 @@ export default function Dashboard() {
                         </td>
 
                         {/* CVs */}
-                        <td className="py-3.5 pr-4 whitespace-nowrap">
+                        <td className="py-3 pr-4 whitespace-nowrap">
                           <span className="text-sm font-mono font-bold" style={{ color: '#22D3EE' }}>
                             {p.completados > 0 ? p.completados + '/' : ''}{p.total_candidatos}
                           </span>
                           <span className="text-xs text-slate-600 ml-1">CVs</span>
                         </td>
 
-                        {/* Fecha */}
-                        <td className="py-3.5 pr-4 whitespace-nowrap">
+                        {/* Fecha — oculta en móvil */}
+                        <td className="py-3 pr-4 whitespace-nowrap hidden sm:table-cell">
                           <span className="text-xs text-slate-400">{fecha}</span>
                         </td>
 
-                        {/* Hora */}
-                        <td className="py-3.5 pr-4 whitespace-nowrap">
+                        {/* Hora — oculta en tablets pequeñas */}
+                        <td className="py-3 pr-4 whitespace-nowrap hidden md:table-cell">
                           <span className="text-xs font-mono" style={{ color: '#64748B' }}>{hora}</span>
                         </td>
 
-                        {/* Duración */}
-                        <td className="py-3.5 pr-4 whitespace-nowrap">
+                        {/* Duración — oculta en tablets pequeñas */}
+                        <td className="py-3 pr-4 whitespace-nowrap hidden md:table-cell">
                           {esActivo ? (
                             <span className="text-xs font-mono px-2 py-0.5 rounded-lg animate-pulse"
                               style={{ background: 'rgba(34,211,238,0.08)', color: '#22D3EE',
@@ -307,7 +311,7 @@ export default function Dashboard() {
                         </td>
 
                         {/* Estado */}
-                        <td className="py-3.5 pr-4">
+                        <td className="py-3 pr-4">
                           <BadgeEstado
                             estado={esActivo ? 'en_proceso' : p.estado}
                             completados={esActivo ? analisisActivo.progreso.completado : p.completados}
@@ -315,35 +319,35 @@ export default function Dashboard() {
                           />
                         </td>
 
-                        {/* Acciones — siempre visibles */}
-                        <td className="py-3.5">
-                          <div className="flex gap-2 flex-wrap">
+                        {/* Acciones */}
+                        <td className="py-3">
+                          <div className="flex gap-1.5 flex-wrap">
                             <button onClick={() => navigate('/resultados/' + p.id)}
-                              className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap"
+                              className="px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap"
                               style={{ background: 'rgba(34,211,238,0.08)', color: '#22D3EE', border: '1px solid rgba(34,211,238,0.2)' }}
                               onMouseEnter={e => e.currentTarget.style.background = 'rgba(34,211,238,0.15)'}
                               onMouseLeave={e => e.currentTarget.style.background = 'rgba(34,211,238,0.08)'}>
-                              Ver ranking
+                              Ver
                             </button>
 
                             <button
                               onClick={() => handleExportar(p)}
                               disabled={exportando === p.id || p.completados === 0}
-                              className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-all disabled:opacity-40 whitespace-nowrap"
+                              className="px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all disabled:opacity-40 whitespace-nowrap"
                               style={{ background: 'rgba(74,222,128,0.08)', color: '#4ADE80', border: '1px solid rgba(74,222,128,0.2)' }}
                               onMouseEnter={e => !e.currentTarget.disabled && (e.currentTarget.style.background = 'rgba(74,222,128,0.15)')}
                               onMouseLeave={e => e.currentTarget.style.background = 'rgba(74,222,128,0.08)'}>
-                              {exportando === p.id ? '...' : '📥 Excel'}
+                              {exportando === p.id ? '…' : '📥'}
                             </button>
 
                             <button
                               onClick={() => handleEliminar(p)}
                               disabled={eliminando === p.id}
-                              className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-all disabled:opacity-40"
+                              className="px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all disabled:opacity-40"
                               style={{ background: 'rgba(248,113,113,0.08)', color: '#F87171', border: '1px solid rgba(248,113,113,0.2)' }}
                               onMouseEnter={e => !e.currentTarget.disabled && (e.currentTarget.style.background = 'rgba(248,113,113,0.15)')}
                               onMouseLeave={e => e.currentTarget.style.background = 'rgba(248,113,113,0.08)'}>
-                              {eliminando === p.id ? '...' : '🗑'}
+                              {eliminando === p.id ? '…' : '🗑'}
                             </button>
                           </div>
                         </td>
@@ -355,7 +359,7 @@ export default function Dashboard() {
             </div>
           )}
         </Card>
-      </div>
+      </div>  {/* fin max-w-7xl mx-auto */}
     </AppLayout>
   )
 }

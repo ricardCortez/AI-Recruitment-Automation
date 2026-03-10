@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { useAuth } from '../context/AuthContext'
 import { authService } from '../services/authService'
 import AppLayout from '../components/layout/AppLayout'
-import { Card, CardTitle, Badge } from '../components/ui/index.jsx'
+import { Card, CardTitle, Badge, PageContainer } from '../components/ui/index.jsx'
 import toast from 'react-hot-toast'
 
 // ── Sección: Cambiar contraseña ───────────────────────────────────────────────
@@ -262,7 +262,7 @@ export default function Perfil() {
 
   return (
     <AppLayout>
-      <div className="p-8 max-w-4xl">
+      <PageContainer size="lg">
 
         <div className="mb-8">
           <h1 className="text-3xl font-black text-white tracking-tight">Mi perfil</h1>
@@ -295,7 +295,7 @@ export default function Perfil() {
           <Configurar2FA user={user} />
         </div>
 
-      </div>
+      </PageContainer>
     </AppLayout>
   )
 }

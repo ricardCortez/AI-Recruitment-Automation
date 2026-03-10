@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { procesoService, reportesService } from '../services/procesoService'
 import AppLayout from '../components/layout/AppLayout'
+import { PageContainer } from '../components/ui/index.jsx'
 import { useTheme } from '../components/lg/ThemeContext'
 import { GlassCard, ScoreRing, ScoreBar, LGSpinner, LGEmpty, ActionButton, PrimaryButton, BackButton, SectionLabel, LGBadge } from '../components/lg/components'
 import { AC, scoreColor, blur } from '../components/lg/theme'
@@ -282,6 +283,7 @@ export default function Resultados() {
 
   return (
     <AppLayout>
+      <PageContainer>
       <BackButton onClick={() => navigate('/dashboard')}>← Dashboard</BackButton>
 
       {/* ── Header ── */}
@@ -443,6 +445,7 @@ export default function Resultados() {
           onCerrar={cerrarComparacion}
         />
       )}
+      </PageContainer>
     </AppLayout>
   )
 }

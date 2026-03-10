@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { userService } from '../services/procesoService'
 import AppLayout from '../components/layout/AppLayout'
-import { Card, Badge, Spinner, EmptyState } from '../components/ui/index.jsx'
+import { Card, Badge, Spinner, EmptyState, PageContainer } from '../components/ui/index.jsx'
 import toast from 'react-hot-toast'
 
 const ROL_VARIANT = { admin: 'purple', reclutador: 'cyan', supervisor: 'default' }
@@ -44,7 +44,7 @@ export default function Usuarios() {
 
   return (
     <AppLayout>
-      <div className="p-8 max-w-6xl">
+      <PageContainer>
 
         <div className="flex items-start justify-between mb-8 flex-wrap gap-4">
           <div>
@@ -137,7 +137,7 @@ export default function Usuarios() {
             </div>
           )}
         </Card>
-      </div>
+      </PageContainer>
     </AppLayout>
   )
 }

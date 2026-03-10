@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import api from '../services/api'
 import AppLayout from '../components/layout/AppLayout'
-import { Card, CardTitle, Spinner } from '../components/ui/index.jsx'
+import { Card, CardTitle, Spinner, PageContainer } from '../components/ui/index.jsx'
 import toast from 'react-hot-toast'
 
 // ─── Catálogo de modelos con requisitos de hardware ──────────────────────────
@@ -298,7 +298,7 @@ export default function Configuracion() {
   if (!esSuperAdmin) {
     return (
       <AppLayout>
-        <div className="p-8 max-w-2xl">
+        <PageContainer size="sm">
           <div className="flex items-start justify-between mb-8 flex-wrap gap-4">
             <div>
               <h1 className="text-3xl font-black text-white tracking-tight">Configuración de IA</h1>
@@ -401,14 +401,14 @@ export default function Configuracion() {
             </Card>
 
           </div>
-        </div>
+        </PageContainer>
       </AppLayout>
     )
   }
 
   return (
     <AppLayout>
-      <div className="p-8 max-w-5xl">
+      <PageContainer size="lg">
         <div className="flex items-start justify-between mb-8 flex-wrap gap-4">
           <div>
             <h1 className="text-3xl font-black text-white tracking-tight">Configuración de IA</h1>
@@ -717,7 +717,7 @@ export default function Configuracion() {
           </Card>
         )}
 
-      </div>
+      </PageContainer>
     </AppLayout>
   )
 }

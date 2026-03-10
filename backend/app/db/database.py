@@ -31,6 +31,9 @@ def _aplicar_migraciones():
         "ALTER TABLE procesos ADD COLUMN inicio_analisis DATETIME",
         # Bajo 24: Índice en creado_en para ORDER BY DESC eficiente
         "CREATE INDEX IF NOT EXISTS ix_procesos_creado_en ON procesos (creado_en)",
+        # v5: alertas y preguntas generadas por la IA
+        "ALTER TABLE analisis ADD COLUMN alertas_json JSON",
+        "ALTER TABLE analisis ADD COLUMN preguntas_json JSON",
     ]
     with engine.connect() as conn:
         for sql in migraciones:

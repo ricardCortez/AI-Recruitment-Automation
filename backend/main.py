@@ -25,6 +25,14 @@ async def lifespan(app: FastAPI):
     create_tables()
     run_seed()
     logger.info("Base de datos lista.")
+    # Aplicar configuración de IA guardada (config.json) sobre los defaults de .env
+    try:
+        from app.api.config import leer_config
+        saved_cfg = leer_config()
+        settings.OLLAMA_MODEL = saved_cfg.get("modelo", settings.OLLAMA_MODEL)
+        logger.info("Modelo IA cargado desde config.json: %s", settings.OLLAMA_MODEL)
+    except Exception as e:
+        logger.warning("No se pudo leer config.json al inicio: %s", e)
     yield
     # ── Shutdown ─────────────────────────────────────────────────────────────
     logger.info("Apagando servidor.")

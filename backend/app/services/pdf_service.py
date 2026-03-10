@@ -1,24 +1,113 @@
 """
 Extracción de texto y datos básicos de PDFs.
-Mejoras: nombre más preciso con múltiples heurísticas combinadas.
+La extracción del nombre se delega a extractor_nombre.extraer_nombre_cv().
 """
 
 import re
 from pathlib import Path
 import pdfplumber
 from app.utils.logger import get_logger
+from app.services.extractor_nombre import extraer_nombre_cv
 
 logger = get_logger(__name__)
 
-# Palabras que NO son nombres (encabezados comunes de CVs)
-PALABRAS_EXCLUIR = {
-    'curriculum', 'vitae', 'cv', 'resume', 'perfil', 'profile',
-    'datos', 'personales', 'información', 'contacto', 'contact',
-    'experiencia', 'experience', 'educación', 'education',
-    'habilidades', 'skills', 'objetivo', 'summary', 'sobre',
-    'dirección', 'address', 'teléfono', 'phone', 'email', 'correo',
-    'linkedin', 'github', 'fecha', 'nacimiento',
-}
+# Secciones relevantes para el análisis de compatibilidad, en orden de prioridad.
+# Cada entrada: (regex de detección del header, nombre interno de sección)
+_PRIORIDAD_SECCIONES = [
+    (r'resumen|summary|perfil\s*prof|profile|objetivo|objective|sobre\s+m[ií]|acerca', 'resumen'),
+    (r'experiencia|experience|trabajo|empleo|employment|work\s*hist|trayectoria|cargo', 'experiencia'),
+    (r'habilidades|skills|competencias|conocimientos|tecnolog|herramientas|tools|stack', 'habilidades'),
+    (r'educaci[oó]n|education|formaci[oó]n|estudio|acad[eé]m|t[ií]tulo|grado', 'educacion'),
+    (r'certificaci[oó]n|certif|cursos?|courses?|capacitaci|training', 'certificaciones'),
+    (r'idioma|language|lenguaje', 'idiomas'),
+    (r'proyectos?|projects?|logros?|achievements?|portfolio', 'proyectos'),
+]
+
+# Palabras que, si aparecen solas en una línea corta, NO son headers de sección
+_NO_ES_HEADER = re.compile(
+    r'@|https?://|www\.|linkedin|github|\d{4}|\bde\b|\bthe\b|\band\b|\by\s+\b',
+    re.IGNORECASE,
+)
+
+
+def extraer_secciones_relevantes(texto: str, max_chars: int = 2800) -> str:
+    """
+    Divide el CV en secciones por headers y retorna sólo el contenido
+    relevante para el análisis LLM, priorizando experiencia y habilidades.
+
+    Si no detecta secciones, retorna el texto hasta max_chars.
+    Reduce el prompt entre un 20-40% respecto al truncado ciego.
+    """
+    lineas = texto.splitlines()
+    secciones: dict[str, str] = {}
+    seccion_actual: str | None = None
+    buffer: list[str] = []
+
+    def _flush():
+        nonlocal seccion_actual, buffer
+        if seccion_actual and buffer:
+            contenido = "\n".join(buffer).strip()
+            if contenido:
+                # Si ya existe la sección, concatenar (puede aparecer varias veces)
+                secciones[seccion_actual] = (
+                    secciones.get(seccion_actual, "") + "\n" + contenido
+                ).strip()
+        buffer = []
+
+    for linea in lineas:
+        limpia = linea.strip()
+        if not limpia:
+            if buffer:
+                buffer.append("")
+            continue
+
+        # Un header de sección es una línea corta que coincide con una categoría conocida
+        # y no parece ser un dato de contacto ni una fecha
+        es_header = (
+            len(limpia) <= 55
+            and not _NO_ES_HEADER.search(limpia)
+            and any(re.search(pat, limpia, re.IGNORECASE) for pat, _ in _PRIORIDAD_SECCIONES)
+        )
+
+        if es_header:
+            _flush()
+            for pat, nombre in _PRIORIDAD_SECCIONES:
+                if re.search(pat, limpia, re.IGNORECASE):
+                    seccion_actual = nombre
+                    break
+        else:
+            if seccion_actual is not None:
+                buffer.append(limpia)
+
+    _flush()
+
+    if not secciones:
+        # Sin secciones detectadas: truncado simple
+        return texto[:max_chars]
+
+    # Construir texto compacto en orden de prioridad
+    orden = ['resumen', 'experiencia', 'habilidades', 'educacion',
+             'certificaciones', 'idiomas', 'proyectos']
+    partes: list[str] = []
+    chars_usados = 0
+
+    for nombre in orden:
+        if nombre not in secciones:
+            continue
+        disponible = max_chars - chars_usados
+        if disponible < 80:
+            break
+        contenido = secciones[nombre]
+        if len(contenido) > disponible:
+            # Cortar en límite de línea para no partir palabras
+            contenido = contenido[:disponible].rsplit('\n', 1)[0]
+        header = nombre.upper()
+        bloque = f"{header}\n{contenido}"
+        partes.append(bloque)
+        chars_usados += len(bloque) + 2  # +2 para el separador \n\n
+
+    resultado = "\n\n".join(partes)
+    return resultado if resultado.strip() else texto[:max_chars]
 
 
 def extraer_texto(pdf_path: Path) -> str:
@@ -47,50 +136,10 @@ def extraer_telefono(texto: str) -> str | None:
 
 def extraer_nombre(texto: str) -> str | None:
     """
-    Heurísticas en orden de confianza para extraer el nombre.
-    La IA corregirá si esto falla.
+    Extrae el nombre del candidato delegando al módulo extractor_nombre.
+    La IA puede completar o corregir el resultado si este falla.
     """
-    lineas = [l.strip() for l in texto.splitlines() if l.strip()]
-    lineas_utiles = lineas[:20]  # Solo las primeras 20 líneas
-
-    candidatos = []
-
-    for linea in lineas_utiles:
-        # Ignorar líneas demasiado largas o cortas
-        if len(linea) < 4 or len(linea) > 60:
-            continue
-
-        # Ignorar si contiene @, números solos, o palabras clave
-        if '@' in linea or re.search(r'\d{4,}', linea):
-            continue
-
-        palabras = linea.split()
-        if len(palabras) < 2 or len(palabras) > 5:
-            continue
-
-        # Ignorar si alguna palabra está en la lista de exclusión
-        palabras_lower = [p.lower().strip('.,:-') for p in palabras]
-        if any(p in PALABRAS_EXCLUIR for p in palabras_lower):
-            continue
-
-        # Ignorar si tiene caracteres raros
-        if re.search(r'[|/\\@#$%^&*()_+=\[\]{}]', linea):
-            continue
-
-        # Contar palabras que empiezan con mayúscula
-        mayusculas = sum(1 for p in palabras if p and p[0].isupper())
-
-        # Score: más palabras con mayúscula = más probable que sea nombre
-        score = mayusculas / len(palabras)
-        if score >= 0.6:
-            candidatos.append((score, linea))
-
-    if candidatos:
-        # Retornar el candidato con mayor score
-        candidatos.sort(reverse=True)
-        return candidatos[0][1]
-
-    return None
+    return extraer_nombre_cv(texto)
 
 
 def extraer_datos_basicos(pdf_path: Path) -> dict:

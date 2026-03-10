@@ -105,6 +105,19 @@ JSON (puntaje>70 si supera requisito; alertas=inconsistencias detectadas; pregun
 {{"nombre":"<str>","email":"<str>","telefono":"<str>","puntaje_total":<0-100>,"criterios":[{{"criterio":"<str>","peso":<int>,"puntaje":<int>,"cumple":"<si|parcial|no>","descripcion":"<breve>"}}],"resumen":"<APTO/NO APTO>","alertas":[{{"tipo":"<inconsistencia|vacio|riesgo|verificar>","nivel":"<alta|media|baja>","descripcion":"<texto>"}}],"preguntas":[{{"categoria":"<brecha|excedente|alerta|fit>","pregunta":"<texto>","objetivo":"<texto>"}}]}}"""
 
 
+def _get_modelo_activo() -> str:
+    """
+    Lee el modelo activo desde config.json en tiempo de ejecución.
+    Esto asegura que el modelo guardado por el usuario persista entre
+    reinicios del servidor, sin depender del estado en memoria de settings.
+    """
+    try:
+        from app.api.config import leer_config
+        return leer_config().get("modelo") or settings.OLLAMA_MODEL
+    except Exception:
+        return settings.OLLAMA_MODEL
+
+
 def _params_modelo(modelo: str) -> dict:
     if modelo in MODELO_PARAMS:
         return MODELO_PARAMS[modelo]
@@ -121,12 +134,14 @@ def _get_opciones(max_ctx: int = 4096) -> dict:
         from app.api.config import leer_config
         cfg = leer_config()
         dispositivo = cfg.get("dispositivo", "cpu")
-        threads = max(cfg.get("num_threads", optimo_default), optimo_default)
+        threads     = max(cfg.get("num_threads", optimo_default), optimo_default)
+        temperature = cfg.get("temperature", 0)
+        seed        = cfg.get("seed", 42)
         if dispositivo == "gpu":
-            return {"temperature": 0, "seed": 42, "num_gpu": 999,
+            return {"temperature": temperature, "seed": seed, "num_gpu": 999,
                     "num_ctx": max_ctx, "keep_alive": -1}
         else:
-            return {"temperature": 0, "seed": 42, "num_gpu": 0,
+            return {"temperature": temperature, "seed": seed, "num_gpu": 0,
                     "num_thread": threads, "num_ctx": max_ctx,
                     "keep_alive": -1, "mmap": True, "f16_kv": False}
     except Exception:
@@ -140,10 +155,13 @@ def analizar_cv_completo(nombre_puesto: str, requisitos: str, texto_cv: str) -> 
         raise ValueError("CV sin texto suficiente para analizar.")
 
     texto = texto_cv.strip()
-    if len(texto) > 2000:
-        texto = texto[:1500] + "\n...\n" + texto[-500:]
+    # La capa anterior (extraer_secciones_relevantes) ya compacta a ≤2800 chars;
+    # aquí sólo aplicamos un tope de seguridad por si se llama directamente.
+    if len(texto) > 3000:
+        texto = texto[:3000]
 
-    params = _params_modelo(settings.OLLAMA_MODEL)
+    modelo  = _get_modelo_activo()
+    params  = _params_modelo(modelo)
     instruccion = _INST_CORTA if params["verboso"] else _INST_NORMAL
 
     prompt = PROMPT_COMPLETO.format(
@@ -167,13 +185,14 @@ def _llamar_ollama(prompt: str, nombre_puesto: str = "", requisitos: str = "", t
     except ImportError:
         raise RuntimeError("Libreria 'ollama' no instalada.")
 
-    nombre_lower = settings.OLLAMA_MODEL.lower()
+    modelo       = _get_modelo_activo()
+    nombre_lower = modelo.lower()
     if "-base" in nombre_lower and "-instruct" not in nombre_lower:
         raise RuntimeError(
-            "Modelo '{}' es BASE. Usa variante -instruct.".format(settings.OLLAMA_MODEL)
+            "Modelo '{}' es BASE. Usa variante -instruct.".format(modelo)
         )
 
-    params     = _params_modelo(settings.OLLAMA_MODEL)
+    params     = _params_modelo(modelo)
     max_tokens = params["num_predict"]
     max_ctx    = params["num_ctx"]
 
@@ -184,13 +203,13 @@ def _llamar_ollama(prompt: str, nombre_puesto: str = "", requisitos: str = "", t
     opts["num_predict"] = max_tokens
 
     logger.info("  Ollama [%s]: ctx=%s gpu=%s threads=%s tokens=%s prompt_chars=%s",
-                settings.OLLAMA_MODEL, ctx,
+                modelo, ctx,
                 opts.get("num_gpu", 0), opts.get("num_thread", "GPU"),
                 max_tokens, len(prompt))
 
     try:
         r = ollama.chat(
-            model=settings.OLLAMA_MODEL,
+            model=modelo,
             messages=[{"role": "user", "content": prompt}],
             options=opts,
         )
@@ -211,7 +230,7 @@ def _llamar_ollama(prompt: str, nombre_puesto: str = "", requisitos: str = "", t
         if "connection" in msg or "refused" in msg:
             raise RuntimeError("Ollama no responde. Verifica que este corriendo.")
         if "not found" in msg or "pull" in msg:
-            raise RuntimeError("Modelo '{}' no descargado.".format(settings.OLLAMA_MODEL))
+            raise RuntimeError("Modelo '{}' no descargado.".format(modelo))
         logger.warning("  Intento 1 fallido (%s) — reintentando con rescate...", e)
 
     # ── Rescate ───────────────────────────────────────────────────────────────
@@ -232,7 +251,7 @@ def _llamar_ollama(prompt: str, nombre_puesto: str = "", requisitos: str = "", t
         logger.info("  Rescate: ctx=%s tokens=1200 prompt_chars=%s", ctx_rescate, len(prompt_rescate))
 
         r2 = ollama.chat(
-            model=settings.OLLAMA_MODEL,
+            model=modelo,
             messages=[{"role": "user", "content": prompt_rescate}],
             options=opts_rescate,
         )
@@ -417,22 +436,23 @@ def _parsear(texto: str) -> dict:
 
 
 async def verificar_ollama() -> dict:
+    modelo = _get_modelo_activo()
     try:
         import ollama
         models  = ollama.list()
         nombres = [m["name"] for m in models.get("models", [])]
-        base    = settings.OLLAMA_MODEL.split(":")[0]
+        base    = modelo.split(":")[0]
         ok      = any(base in n for n in nombres)
         return {
             "ollama_disponible":  True,
             "modelo_disponible":  ok,
-            "modelo_requerido":   settings.OLLAMA_MODEL,
+            "modelo_requerido":   modelo,
             "modelos_instalados": nombres,
         }
     except Exception as e:
         return {
             "ollama_disponible":  False,
             "modelo_disponible":  False,
-            "modelo_requerido":   settings.OLLAMA_MODEL,
+            "modelo_requerido":   modelo,
             "error": str(e),
         }

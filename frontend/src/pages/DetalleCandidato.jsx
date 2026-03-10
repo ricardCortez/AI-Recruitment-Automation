@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { procesoService } from '../services/procesoService'
 import AppLayout from '../components/layout/AppLayout'
+import { PageContainer } from '../components/ui/index.jsx'
 import { useTheme } from '../components/lg/ThemeContext'
 import { GlassCard, ScoreRing, ScoreBar, LGBadge, LGSpinner, BackButton, SectionLabel, ActionButton } from '../components/lg/components'
 import { AC, scoreColor, blur } from '../components/lg/theme'
@@ -281,7 +282,7 @@ export default function DetalleCandidato() {
 
   return (
     <AppLayout>
-      <div style={{ maxWidth: 980 }}>
+      <PageContainer size="lg">
         {/* ── Breadcrumb + historial ── */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
           <BackButton onClick={() => navigate(`/resultados/${procesoId}`)}>← Volver al ranking</BackButton>
@@ -671,7 +672,7 @@ export default function DetalleCandidato() {
 
           </div>
         </div>
-      </div>
+      </PageContainer>
 
       {/* ── Modal Historial ── */}
       {showHistorial && (

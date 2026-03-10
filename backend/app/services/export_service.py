@@ -52,11 +52,12 @@ def generar_excel_ranking(proceso_nombre: str, items: list, destino: Path) -> Pa
     ws.row_dimensions[2].height = 22
 
     # ── Datos ─────────────────────────────────────────────────────────────
+    # candidato y analisis son dicts devueltos por obtener_ranking()
     for i, item in enumerate(items, start=3):
-        c    = item["candidato"]
-        an   = item["analisis"]
+        c    = item["candidato"]   # dict: {id, nombre, email, telefono, proceso_id}
+        an   = item["analisis"]    # dict o None: {puntaje_total, estado, resumen_ia, ...}
         pos  = item["posicion"]
-        puntaje = an.puntaje_total if an else None
+        puntaje = an["puntaje_total"] if an else None
 
         # Color de fila según puntaje
         if puntaje is None:
@@ -70,13 +71,13 @@ def generar_excel_ranking(proceso_nombre: str, items: list, destino: Path) -> Pa
 
         fila = [
             pos,
-            c.nombre or "—",
-            c.email or "—",
-            c.telefono or "—",
+            c["nombre"] or "—",
+            c["email"] or "—",
+            c["telefono"] or "—",
             f"{puntaje:.1f}%" if puntaje is not None else "—",
-            an.estado if an else "sin analizar",
-            an.proveedor_ia or "—" if an else "—",
-            (an.resumen_ia[:200] if an and an.resumen_ia else "—"),
+            an["estado"] if an else "sin analizar",
+            (an["proveedor_ia"] or "—") if an else "—",
+            (an["resumen_ia"][:200] if an and an["resumen_ia"] else "—"),
         ]
 
         for col, val in enumerate(fila, 1):
@@ -106,10 +107,10 @@ def generar_excel_ranking(proceso_nombre: str, items: list, destino: Path) -> Pa
     for item in items:
         c  = item["candidato"]
         an = item["analisis"]
-        if not an or not an.detalle_json:
+        if not an or not an["detalle_json"]:
             continue
-        for crit in an.detalle_json:
-            ws2.cell(row=fila_det, column=1, value=c.nombre or "—").border = bdr
+        for crit in an["detalle_json"]:
+            ws2.cell(row=fila_det, column=1, value=c["nombre"] or "—").border = bdr
             ws2.cell(row=fila_det, column=2, value=crit.get("criterio", "")).border = bdr
             ws2.cell(row=fila_det, column=3, value=crit.get("cumple", "")).border = bdr
             ws2.cell(row=fila_det, column=4, value=crit.get("puntaje", "")).border = bdr

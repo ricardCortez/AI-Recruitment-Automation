@@ -66,6 +66,21 @@ export function Spinner({ size = 8 }) {
   )
 }
 
+// Contenedor de página estándar — centrado con max-width y padding responsive.
+// size: 'sm' = max-w-2xl  |  'md' = max-w-3xl  |  'lg' = max-w-5xl  |  'xl' = max-w-7xl (default)
+// Usar en todas las páginas dentro de <AppLayout> para layout consistente.
+export function PageContainer({ children, className = '', size = 'xl' }) {
+  const maxW = size === 'sm' ? 'max-w-2xl'
+             : size === 'md' ? 'max-w-3xl'
+             : size === 'lg' ? 'max-w-5xl'
+             :                 'max-w-7xl'
+  return (
+    <div className={`w-full ${maxW} mx-auto px-4 py-6 sm:px-6 sm:py-8 lg:px-8 ${className}`}>
+      {children}
+    </div>
+  )
+}
+
 // Estado vacío
 export function EmptyState({ icon, title, description, action }) {
   return (
