@@ -1,5 +1,6 @@
 """
 Modelo: Resultado del análisis IA de un candidato.
+v5: agrega alertas_json y preguntas_json
 """
 
 import enum
@@ -23,16 +24,17 @@ class Analisis(Base):
     id              = Column(Integer, primary_key=True, index=True)
     candidato_id    = Column(Integer, ForeignKey("candidatos.id"), nullable=False)
     estado          = Column(Enum(EstadoAnalisis), default=EstadoAnalisis.PENDIENTE)
-    puntaje_total   = Column(Float, nullable=True)           # 0.0 – 100.0
-    detalle_json    = Column(JSON, nullable=True)            # Lista de criterios evaluados
-    resumen_ia      = Column(Text, nullable=True)            # Texto generado por la IA
-    proveedor_ia    = Column(String(50), nullable=True)      # "ollama" | "openai"
-    error_msg       = Column(Text, nullable=True)            # Error real al fallar
-    progress_msg    = Column(Text, nullable=True)            # Progreso durante procesamiento "[PROG:50] ..."
+    puntaje_total   = Column(Float, nullable=True)
+    detalle_json    = Column(JSON, nullable=True)        # criterios evaluados
+    resumen_ia      = Column(Text, nullable=True)
+    alertas_json    = Column(JSON, nullable=True)        # ← lista de alertas detectadas
+    preguntas_json  = Column(JSON, nullable=True)        # ← preguntas para entrevista
+    proveedor_ia    = Column(String(50), nullable=True)
+    error_msg       = Column(Text, nullable=True)
+    progress_msg    = Column(Text, nullable=True)
     procesado_en    = Column(DateTime, nullable=True)
     creado_en       = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
-    # Relación
     candidato = relationship("Candidato", back_populates="analisis")
 
     def __repr__(self):

@@ -4,7 +4,7 @@ from pydantic import BaseModel, field_validator
 from typing import Optional, List
 from datetime import datetime
 
-# Patrones de prompt injection más comunes
+# ── Seguridad: detección de prompt injection ─────────────────────────────────
 _PATRONES_INJECTION = re.compile(
     r'(ignora\s+(las\s+)?instrucciones|ignore\s+(all\s+|previous\s+)?instructions?|'
     r'olvida\s+(todo|las\s+instrucciones)|forget\s+(everything|instructions?)|'
@@ -72,9 +72,12 @@ class CandidatoOut(BaseModel):
 # ── Análisis ──────────────────────────────────────────────────────────────────
 class CriterioEvaluado(BaseModel):
     criterio: str
-    cumple: str          # "si" | "parcial" | "no"
+    cumple: str               # "si" | "parcial" | "no"
     descripcion: str
-    puntaje: float       # 0–100
+    puntaje: float            # 0–100
+    peso: Optional[float] = None  # importancia relativa (suma 100)
+
+    model_config = {"from_attributes": True}
 
 
 class AnalisisOut(BaseModel):
@@ -83,8 +86,17 @@ class AnalisisOut(BaseModel):
     estado: str
     puntaje_total: Optional[float]
     detalle_json: Optional[List[CriterioEvaluado]]
+
+    # mejoras del primer archivo
+    alertas_json: Optional[List[dict]] = None
+    preguntas_json: Optional[List[dict]] = None
+
     resumen_ia: Optional[str]
     proveedor_ia: Optional[str]
+
+    # manejo de errores
+    error_msg: Optional[str] = None
+
     procesado_en: Optional[datetime]
 
     model_config = {"from_attributes": True}

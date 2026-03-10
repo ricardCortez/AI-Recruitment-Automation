@@ -1,10 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-Motor de IA — v5
-- Valoracion de excedente: candidatos que superan lo requerido obtienen puntajes 90-100
-- Descripcion explicita del excedente en cada criterio
-- Resumen con "VALOR AGREGADO" cuando el candidato supera requisitos
-- Tokens y retry sin cambios respecto a v4
+Motor de IA — v6
+- Valoracion de excedente (v5)
+- Deteccion de alertas en el CV (inconsistencias, vacios, señales de riesgo)
+- Generacion de preguntas especificas para entrevista
 """
 
 import json
@@ -16,16 +15,16 @@ from app.utils.logger import get_logger
 logger = get_logger(__name__)
 
 MODELO_PARAMS = {
-    "llama3.1:8b":  {"num_predict": 1400, "num_ctx": 4096, "verboso": False},
-    "qwen2.5:7b":   {"num_predict": 2500, "num_ctx": 4096, "verboso": True},
-    "qwen2.5:14b":  {"num_predict": 1400, "num_ctx": 4096, "verboso": False},
-    "qwen2.5:32b":  {"num_predict": 1400, "num_ctx": 4096, "verboso": False},
+    "llama3.1:8b":  {"num_predict": 1800, "num_ctx": 4096, "verboso": False},
+    "qwen2.5:7b":   {"num_predict": 3000, "num_ctx": 4096, "verboso": True},
+    "qwen2.5:14b":  {"num_predict": 1800, "num_ctx": 4096, "verboso": False},
+    "qwen2.5:32b":  {"num_predict": 1800, "num_ctx": 4096, "verboso": False},
 }
 
-_INST_CORTA  = " Descripciones MUY CORTAS: max 8 palabras por criterio."
-_INST_NORMAL = " Descripciones concisas: max 14 palabras por criterio."
+_INST_CORTA  = " Descripciones MUY CORTAS: max 8 palabras. Preguntas directas y breves."
+_INST_NORMAL = " Descripciones concisas: max 14 palabras. Preguntas claras y especificas."
 
-PROMPT_COMPLETO = """Eres un evaluador experto en RRHH. Tu tarea es evaluar con MAXIMA PRECISION el CV vs los requisitos del puesto.{instruccion}
+PROMPT_COMPLETO = """Eres un evaluador experto en RRHH. Evalua con MAXIMA PRECISION el CV vs los requisitos.{instruccion}
 Responde SOLO JSON valido, sin markdown ni texto extra.
 
 PUESTO: {nombre_puesto}
@@ -36,76 +35,74 @@ CV DEL CANDIDATO:
 {texto_cv}
 
 ═══════════════════════════════════════════════════════════════
-PRINCIPIO FUNDAMENTAL — LEE ESTO ANTES DE EVALUAR:
-Un candidato que tiene MAS de lo requerido es MAS VALIOSO que uno
-que solo cumple exactamente. Tener experiencia adicional, certificaciones
-extra, habilidades adicionales relevantes o conocimientos que van mas alla
-de lo pedido AUMENTA el puntaje. No penalices el excedente: premialo.
+PRINCIPIO FUNDAMENTAL:
+Un candidato que tiene MAS de lo requerido es MAS VALIOSO.
+Experiencia extra, certs adicionales, habilidades adicionales relevantes
+AUMENTAN el puntaje. No penalices el excedente: PREMIALO.
 ═══════════════════════════════════════════════════════════════
 
-ESCALA DE PUNTAJE 0-100 (aplica criterio por criterio):
-
-  100    = EXCEDE MUY AMPLIAMENTE: tiene el doble o mas de lo pedido.
-           Ej: piden 3 anos → tiene 10+; piden 1 idioma → tiene 3; piden 1 cert → tiene 4+
-  90-99  = EXCEDE NOTABLEMENTE: tiene significativamente mas de lo requerido.
-           Ej: piden 3 anos → tiene 6-9; piden intermedio → tiene avanzado certificado
-  80-89  = SUPERA LO REQUERIDO: cumple todo y tiene algo extra relevante.
-           Ej: piden 3 anos → tiene 4-5; pide tecnico → tiene licenciatura + experiencia
-  70-79  = CUMPLE EXACTAMENTE: satisface los requisitos del criterio sin excedente notable.
-  55-69  = CUMPLE PARCIALMENTE: cumple los puntos principales pero falta algo secundario.
-  35-54  = CUMPLE A MEDIAS: brechas importantes, cumple menos de la mitad.
-  10-34  = CUMPLE POCO: tiene algo relacionado pero hay brechas criticas.
-   0-9   = NO CUMPLE: no tiene lo que se pide o es completamente irrelevante.
+ESCALA DE PUNTAJE (aplica criterio por criterio):
+  100    = Tiene doble o mas de lo pedido (ej: piden 3 años → tiene 10+)
+  90-99  = Excede notablemente (piden 3 años → tiene 6-9; piden B2 → tiene C2)
+  80-89  = Supera lo requerido: cumple todo + algo extra relevante
+  70-79  = Cumple exactamente los requisitos
+  55-69  = Cumple parcialmente, falta algo secundario
+  35-54  = Cumple a medias, brechas importantes
+  10-34  = Cumple poco, brechas criticas
+   0-9   = No cumple
 
 REGLAS CRITICAS:
-1. Si el candidato tiene MAS anos de experiencia que los requeridos → puntaje MAYOR que 70.
-   Formula orientativa: puntaje_experiencia = min(100, 70 + (anos_extra / anos_requeridos) * 30)
-2. Si el candidato tiene certificaciones o titulos ADICIONALES relevantes al puesto → sube el puntaje del criterio correspondiente.
-3. Si domina herramientas/tecnologias ADICIONALES a las pedidas y son utiles para el puesto → sube el puntaje.
-4. Si el nivel de idioma SUPERA lo requerido (ej: pide B2, tiene C1/nativo) → puntaje 90+.
-5. El excedente debe mencionarse SIEMPRE en la descripcion del criterio.
-6. No todas las personas pueden tener puntaje similar: diferencia a los candidatos claramente.
+1. Mas años de exp que los pedidos → puntaje > 70. Formula: min(100, 70 + (extra/requeridos)*30)
+2. Certificaciones o titulos ADICIONALES relevantes → sube el puntaje del criterio
+3. Herramientas/tecnologias extra utiles para el puesto → sube el puntaje
+4. Nivel de idioma superior al requerido → puntaje 90+
+5. El excedente SIEMPRE se menciona en la descripcion
 
-INSTRUCCIONES PASO A PASO:
+INSTRUCCIONES:
 
-PASO 1 — Agrupa los requisitos en criterios principales (ej: Experiencia, Formacion Academica, Conocimientos Tecnicos, Idiomas, etc.).
+PASO 1 — Criterios: agrupa los requisitos (ej: Experiencia, Formacion, Conocimientos, Idiomas).
+PASO 2 — Pesos: asigna importancia a cada criterio. Todos deben sumar exactamente 100.
+PASO 3 — Evalua cada criterio (puntaje 0-100, premia excedente, describe excedente si aplica).
+PASO 4 — puntaje_total = suma(peso_i * puntaje_i / 100). Verifica el calculo.
+PASO 5 — cumple: "si">=70 | "parcial" 40-69 | "no"<40
+PASO 6 — resumen: "APTO"/"APTO CON RESERVAS"/"NO APTO" + fortalezas + brechas.
+          Si supera requisitos, agregar "VALOR AGREGADO: <detalle>"
 
-PASO 2 — Asigna PESO a cada criterio segun su importancia para el puesto. Todos los pesos deben sumar exactamente 100.
+PASO 7 — alertas: Detecta señales de riesgo o inconsistencias en el CV. Para cada alerta:
+  - tipo: "inconsistencia" | "vacio" | "riesgo" | "verificar"
+  - nivel: "alta" | "media" | "baja"
+  - descripcion: que se detecto (max 15 palabras)
+  Tipos de alertas a buscar:
+  * "inconsistencia": fechas solapadas, saltos inexplicables de carrera, años que no cierran
+  * "vacio": falta de info clave (sin email, sin institucion en el titulo, experiencia sin fechas)
+  * "riesgo": rotacion alta (muchos trabajos cortos <1 año), brecha laboral larga sin explicar
+  * "verificar": titulo sin nombre de institucion, certificacion sin entidad emisora, logros sin metricas verificables
+  Si el CV no tiene alertas reales, devolver lista vacia [].
+  Maximo 5 alertas. Solo incluir las que realmente detectas en el CV.
 
-PASO 3 — Para cada criterio:
-  a) Lee LITERALMENTE lo que pide el requisito.
-  b) Busca en el CV todo lo que el candidato tiene relacionado a ese criterio.
-  c) Determina si cumple, cumple parcial, no cumple O si EXCEDE lo requerido.
-  d) Asigna el puntaje usando la escala de arriba (premia el excedente).
-  e) En descripcion: menciona lo hallado Y si supera el requisito, indica cuanto supera.
-     Ejemplos de descripcion con excedente:
-       "10 anos en TI vs 3 pedidos, jefatura en 2 empresas" 
-       "Python+SQL+Spark, pide solo Python y SQL — extras valorables"
-       "Ingles C2 nativo vs B2 requerido — supera ampliamente"
-       "MBA + Licenciatura vs Licenciatura requerida"
-
-PASO 4 — puntaje_total = suma exacta de (peso_i * puntaje_i / 100).
-  VERIFICA el calculo antes de responder.
-
-PASO 5 — cumple: "si" si puntaje>=70 | "parcial" si 40-69 | "no" si <40
-
-PASO 6 — resumen: empieza con "APTO", "APTO CON RESERVAS" o "NO APTO".
-  Menciona explicitamente si el candidato supera requisitos con la frase "VALOR AGREGADO:" seguida de que aporta extra.
-  Ejemplo: "APTO — VALOR AGREGADO: 10 anos de exp (pide 3), certificaciones AWS adicionales, ingles nativo."
+PASO 8 — preguntas: Genera 4-5 preguntas especificas para la entrevista basadas en:
+  a) Brechas detectadas: preguntar sobre lo que falta o es parcial
+  b) Excedentes: profundizar en lo que el candidato tiene de mas (aprovecharlo)
+  c) Alertas criticas: aclarar inconsistencias o vacios importantes
+  d) Fit cultural/puesto: preguntas sobre motivacion y expectativas segun el rol
+  Para cada pregunta:
+  - categoria: "brecha" | "excedente" | "alerta" | "fit"
+  - pregunta: la pregunta textual (max 25 palabras)
+  - objetivo: que informacion busca obtener (max 10 palabras)
 
 JSON exacto (sin texto antes ni despues):
-{{"nombre":"<str|null>","email":"<str|null>","telefono":"<str|null>","puntaje_total":<0-100>,"criterios":[{{"criterio":"<str>","peso":<0-100>,"puntaje":<0-100>,"cumple":"<si|parcial|no>","descripcion":"<frase con excedente si aplica>"}}],"resumen":"<APTO/NO APTO: fortalezas, brechas y valor agregado>"}}"""
+{{"nombre":"<str|null>","email":"<str|null>","telefono":"<str|null>","puntaje_total":<0-100>,"criterios":[{{"criterio":"<str>","peso":<0-100>,"puntaje":<0-100>,"cumple":"<si|parcial|no>","descripcion":"<frase con excedente si aplica>"}}],"resumen":"<APTO/NO APTO + valor agregado si aplica>","alertas":[{{"tipo":"<inconsistencia|vacio|riesgo|verificar>","nivel":"<alta|media|baja>","descripcion":"<texto>"}}],"preguntas":[{{"categoria":"<brecha|excedente|alerta|fit>","pregunta":"<texto>","objetivo":"<texto>"}}]}}"""
 
 
-PROMPT_RESCATE = """Evalua este CV para el puesto. Responde SOLO con JSON valido. Sin texto extra.
-IMPORTANTE: si el candidato tiene MAS de lo requerido en algun criterio, asigna puntaje > 70 (puede llegar a 100).
+PROMPT_RESCATE = """Evalua este CV para el puesto. Responde SOLO con JSON valido.
+Si el candidato tiene MAS de lo requerido, puntaje > 70 (hasta 100).
 
 PUESTO: {nombre_puesto}
 REQUISITOS: {requisitos_cortos}
-CV (resumen): {cv_corto}
+CV: {cv_corto}
 
-JSON (peso=importancia, puntaje=0-100 donde >70 significa supera requisito, puntaje_total=suma(peso*puntaje/100)):
-{{"nombre":"<str>","email":"<str>","telefono":"<str>","puntaje_total":<0-100>,"criterios":[{{"criterio":"<str>","peso":<0-100>,"puntaje":<0-100>,"cumple":"<si|parcial|no>","descripcion":"<breve, indica si supera requisito>"}}],"resumen":"<APTO/NO APTO: razon y valor agregado si aplica>"}}"""
+JSON (puntaje>70 si supera requisito; alertas=inconsistencias detectadas; preguntas=para entrevista):
+{{"nombre":"<str>","email":"<str>","telefono":"<str>","puntaje_total":<0-100>,"criterios":[{{"criterio":"<str>","peso":<int>,"puntaje":<int>,"cumple":"<si|parcial|no>","descripcion":"<breve>"}}],"resumen":"<APTO/NO APTO>","alertas":[{{"tipo":"<inconsistencia|vacio|riesgo|verificar>","nivel":"<alta|media|baja>","descripcion":"<texto>"}}],"preguntas":[{{"categoria":"<brecha|excedente|alerta|fit>","pregunta":"<texto>","objetivo":"<texto>"}}]}}"""
 
 
 def _params_modelo(modelo: str) -> dict:
@@ -114,7 +111,7 @@ def _params_modelo(modelo: str) -> dict:
     for key, val in MODELO_PARAMS.items():
         if modelo.startswith(key.split(":")[0]):
             return val
-    return {"num_predict": 2000, "num_ctx": 4096, "verboso": True}
+    return {"num_predict": 2500, "num_ctx": 4096, "verboso": True}
 
 
 def _get_opciones(max_ctx: int = 4096) -> dict:
@@ -173,7 +170,7 @@ def _llamar_ollama(prompt: str, nombre_puesto: str = "", requisitos: str = "", t
     nombre_lower = settings.OLLAMA_MODEL.lower()
     if "-base" in nombre_lower and "-instruct" not in nombre_lower:
         raise RuntimeError(
-            "Modelo '{}' es BASE, no sigue instrucciones. Usa variante -instruct.".format(settings.OLLAMA_MODEL)
+            "Modelo '{}' es BASE. Usa variante -instruct.".format(settings.OLLAMA_MODEL)
         )
 
     params     = _params_modelo(settings.OLLAMA_MODEL)
@@ -191,7 +188,6 @@ def _llamar_ollama(prompt: str, nombre_puesto: str = "", requisitos: str = "", t
                 opts.get("num_gpu", 0), opts.get("num_thread", "GPU"),
                 max_tokens, len(prompt))
 
-    # ── Intento 1: prompt completo ──────────────────────────────────────────
     try:
         r = ollama.chat(
             model=settings.OLLAMA_MODEL,
@@ -199,18 +195,16 @@ def _llamar_ollama(prompt: str, nombre_puesto: str = "", requisitos: str = "", t
             options=opts,
         )
         texto = r["message"]["content"].strip()
-
         if not texto:
             raise RuntimeError("Respuesta vacia — modelo posiblemente BASE.")
-
         logger.info("  Respuesta: %s chars", len(texto))
         return _parsear(texto)
 
     except (RuntimeError, ValueError) as e:
         msg = str(e).lower()
-        if "ollama no responde" in msg or "no descargado" in msg or "base" in msg or "vacia" in msg:
+        if any(k in msg for k in ("ollama no responde", "no descargado", "base", "vacia")):
             raise RuntimeError("Error Ollama: {}".format(e))
-        logger.warning("  Intento 1 fallido (%s) — reintentando con prompt de rescate...", e)
+        logger.warning("  Intento 1 fallido (%s) — reintentando con rescate...", e)
 
     except Exception as e:
         msg = str(e).lower()
@@ -218,9 +212,9 @@ def _llamar_ollama(prompt: str, nombre_puesto: str = "", requisitos: str = "", t
             raise RuntimeError("Ollama no responde. Verifica que este corriendo.")
         if "not found" in msg or "pull" in msg:
             raise RuntimeError("Modelo '{}' no descargado.".format(settings.OLLAMA_MODEL))
-        logger.warning("  Intento 1 fallido (%s) — reintentando con prompt de rescate...", e)
+        logger.warning("  Intento 1 fallido (%s) — reintentando con rescate...", e)
 
-    # ── Intento 2: prompt de rescate ─────────────────────────────────────────
+    # ── Rescate ───────────────────────────────────────────────────────────────
     try:
         req_cortos = requisitos[:300] if len(requisitos) > 300 else requisitos
         cv_corto   = texto_cv[:500]   if len(texto_cv)   > 500  else texto_cv
@@ -231,11 +225,11 @@ def _llamar_ollama(prompt: str, nombre_puesto: str = "", requisitos: str = "", t
             cv_corto=cv_corto,
         )
 
-        ctx_rescate = min(len(prompt_rescate) // 3 + 1000 + 128, max_ctx)
+        ctx_rescate  = min(len(prompt_rescate) // 3 + 1200 + 128, max_ctx)
         opts_rescate = _get_opciones(max_ctx=ctx_rescate)
-        opts_rescate["num_predict"] = 1000
+        opts_rescate["num_predict"] = 1200
 
-        logger.info("  Rescate: ctx=%s tokens=1000 prompt_chars=%s", ctx_rescate, len(prompt_rescate))
+        logger.info("  Rescate: ctx=%s tokens=1200 prompt_chars=%s", ctx_rescate, len(prompt_rescate))
 
         r2 = ollama.chat(
             model=settings.OLLAMA_MODEL,
@@ -267,7 +261,7 @@ def _llamar_openai(prompt: str) -> dict:
         model=settings.OPENAI_MODEL,
         messages=[{"role": "user", "content": prompt}],
         temperature=0,
-        max_tokens=1800,
+        max_tokens=2000,
         response_format={"type": "json_object"},
     )
     return _parsear(r.choices[0].message.content.strip())
@@ -314,10 +308,53 @@ _CUMPLE_MAP = {
     "cumple parcialmente": "parcial", "parcial cumple": "parcial",
 }
 
+_ALERTA_NIVEL_MAP  = {"alta": "alta", "alto": "alta", "high": "alta",
+                      "media": "media", "medio": "media", "medium": "media",
+                      "baja": "baja", "bajo": "baja", "low": "baja"}
+_ALERTA_TIPO_MAP   = {"inconsistencia": "inconsistencia", "inconsistency": "inconsistencia",
+                      "vacio": "vacio", "vacío": "vacio", "missing": "vacio",
+                      "riesgo": "riesgo", "risk": "riesgo",
+                      "verificar": "verificar", "verify": "verificar", "check": "verificar"}
+_PREGUNTA_CAT_MAP  = {"brecha": "brecha", "gap": "brecha",
+                      "excedente": "excedente", "surplus": "excedente",
+                      "alerta": "alerta", "alert": "alerta",
+                      "fit": "fit", "cultura": "fit", "cultural": "fit"}
+
 
 def _normalizar_cumple(valor: str) -> str:
-    v = str(valor).lower().strip()
-    return _CUMPLE_MAP.get(v, "no")
+    return _CUMPLE_MAP.get(str(valor).lower().strip(), "no")
+
+
+def _normalizar_alertas(raw: list) -> list:
+    alertas = []
+    for a in (raw or []):
+        if not isinstance(a, dict):
+            continue
+        desc = str(a.get("descripcion") or a.get("description") or "").strip()
+        if not desc:
+            continue
+        alertas.append({
+            "tipo":        _ALERTA_TIPO_MAP.get(str(a.get("tipo","")).lower().strip(), "verificar"),
+            "nivel":       _ALERTA_NIVEL_MAP.get(str(a.get("nivel","")).lower().strip(), "media"),
+            "descripcion": desc[:120],
+        })
+    return alertas[:5]
+
+
+def _normalizar_preguntas(raw: list) -> list:
+    preguntas = []
+    for p in (raw or []):
+        if not isinstance(p, dict):
+            continue
+        texto = str(p.get("pregunta") or p.get("question") or "").strip()
+        if not texto:
+            continue
+        preguntas.append({
+            "categoria": _PREGUNTA_CAT_MAP.get(str(p.get("categoria","")).lower().strip(), "brecha"),
+            "pregunta":  texto[:200],
+            "objetivo":  str(p.get("objetivo") or p.get("objective") or "").strip()[:80],
+        })
+    return preguntas[:5]
 
 
 def _parsear(texto: str) -> dict:
@@ -331,8 +368,7 @@ def _parsear(texto: str) -> dict:
     except json.JSONDecodeError as e:
         logger.warning("JSON invalido (%s) - intentando reparar...", e)
         try:
-            texto_reparado = _reparar_json(texto)
-            data = json.loads(texto_reparado)
+            data = json.loads(_reparar_json(texto))
             logger.info("JSON reparado exitosamente")
         except json.JSONDecodeError as e2:
             logger.error("JSON no reparable: %s | Texto: %s", e2, texto[:300])
@@ -346,6 +382,22 @@ def _parsear(texto: str) -> dict:
         data["resumen"] = "Sin resumen disponible."
 
     data["puntaje_total"] = max(0.0, min(100.0, float(data["puntaje_total"])))
+
+    # ── Recalcular puntaje_total desde los criterios (corrige errores aritméticos de la IA) ──
+    if data["criterios"]:
+        total_peso = sum(float(c.get("peso") or 0) for c in data["criterios"])
+        if total_peso > 5:
+            # Tiene pesos → calcular promedio ponderado
+            recalc = sum(float(c.get("peso") or 0) * float(c["puntaje"]) / 100
+                         for c in data["criterios"])
+            if abs(total_peso - 100) > 2:
+                # Los pesos no suman 100 → normalizar
+                recalc = recalc * 100 / total_peso
+        else:
+            # Sin pesos → promedio simple
+            recalc = sum(float(c["puntaje"]) for c in data["criterios"]) / len(data["criterios"])
+        data["puntaje_total"] = max(0.0, min(100.0, round(recalc, 1)))
+
     for c in data["criterios"]:
         c["puntaje"] = max(0.0, min(100.0, float(c.get("puntaje", 0))))
         c["cumple"]  = _normalizar_cumple(c.get("cumple", "no"))
@@ -356,6 +408,10 @@ def _parsear(texto: str) -> dict:
             data[campo] = None
         else:
             data[campo] = str(v).strip()
+
+    # Normalizar alertas y preguntas (tolerante a ausencia)
+    data["alertas"]   = _normalizar_alertas(data.get("alertas", []))
+    data["preguntas"] = _normalizar_preguntas(data.get("preguntas", []))
 
     return data
 

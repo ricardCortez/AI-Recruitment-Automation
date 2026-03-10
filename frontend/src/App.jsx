@@ -14,10 +14,12 @@ import CrearUsuario    from './pages/CrearUsuario'
 import Perfil          from './pages/Perfil'
 import Configuracion   from './pages/Configuracion'
 import { AnalisisProvider } from './context/AnalisisContext'
+import { ThemeProvider } from './components/lg/ThemeContext'
 
 export default function App() {
   return (
     <BrowserRouter>
+    <ThemeProvider>
     <AuthProvider>
       <AnalisisProvider>
         <Toaster
@@ -51,6 +53,7 @@ export default function App() {
         </Routes>
       </AnalisisProvider>
     </AuthProvider>
+    </ThemeProvider>
     </BrowserRouter>
   )
 }

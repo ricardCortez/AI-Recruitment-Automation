@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from app.models.candidato import Candidato
 from app.models.proceso import Proceso
 from app.models.analisis import Analisis, EstadoAnalisis
-from app.services.pdf_service import extraer_texto, extraer_email, extraer_telefono
+from app.services.pdf_service import extraer_texto, extraer_nombre, extraer_email, extraer_telefono
 from app.services.ia_service import analizar_cv_completo
 from app.core.config import settings
 from app.utils.logger import get_logger
@@ -48,107 +48,6 @@ def _prog(analisis: Analisis, db: Session, pct: int, mensaje: str):
             pass
 
 
-def _extraer_nombre_fallback(texto: str) -> str | None:
-    """Extrae el nombre de las primeras lineas del CV como fallback."""
-    import re
-
-    NO_NOMBRE = {
-        # Titulos profesionales
-        "ingeniero","ing","licenciado","lic","bachiller","tecnico","doctor","dr",
-        "magister","mg","arquitecto","abogado","contador","analista","especialista",
-        "profesional","coordinador","supervisor","gerente","jefe","asistente",
-        "desarrollador","programador","consultor","ejecutivo","director",
-        # Secciones de CV
-        "curriculum","vitae","cv","datos","perfil","resumen","experiencia",
-        "educacion","estudios","habilidades","certificados","referencias",
-        "informacion","personal","contacto","objetivo","presentacion","summary",
-        # Tecnologia / areas
-        "sistemas","computacion","informatica","tecnologia","software","hardware",
-        "redes","seguridad","administracion","gestion","informatico",
-        # Ciudades / paises
-        "lima","peru","arequipa","trujillo","chiclayo","cusco","piura","iquitos",
-        "tacna","huancayo","ica","pucallpa","cajamarca","chimbote",
-        # PALABRAS DE DIRECCION — clave para este fix
-        "jiron","jr","jirón","avenida","av","calle","ca","pasaje","pje",
-        "manzana","mz","lote","lt","bloque","bl","sector","urbanizacion","urb",
-        "villa","condominio","residencial","interior","int","departamento",
-        "dpto","piso","parcela","cooperativa","asociacion","agrupacion",
-        "vmt","ate","sjl","sjm","smp","vmr","callao","barranco","miraflores",
-        "surco","surquillo","chorrillos","lince","breña","rimac","carabayllo",
-        "comas","independencia","puente","piedra","lurin","pachacamac",
-        "san","santa","santo","gabriel","borja","isidro","miguel","martin",
-        # Conectores / preposiciones
-        "de","del","la","los","las","en","con","para","por","y","e","o",
-        "nombres","apellidos","nacionalidad","idiomas","espanol","ingles",
-        "fecha","nacimiento","domicilio","lugar",
-    }
-
-    CHARS_MAL = ('+', '|', '#', '(', ')', '@', '°')
-    KEYS_MAL  = ['http','www','linkedin','github','telefono','celular',
-                 'email','correo','direccion','domicilio','dni','ruc', ':']
-
-    # Patrones que indican direccion o dato de contacto — nunca son nombres
-    PATRON_DIRECCION = re.compile(
-        r'^\d+|'                          # empieza con numero
-        r'\b\d{3,}\b|'                    # tiene numero de 3+ digitos (N° casa)
-        r'\b(jr\.?|av\.?|cll?\.?)\b|'    # abreviatura de via
-        r'\bmz\b|\blt\b|\bint\b|'        # manzana/lote/interior
-        r'\b[A-Z]{2,4}\b.*\b[A-Z]{2,4}\b',  # siglas seguidas tipo "VMT SJL"
-        re.IGNORECASE
-    )
-
-    def es_palabra_nombre(p: str) -> bool:
-        return bool(re.match(r'^[A-Za-z\u00C0-\u024F]+$', p)) and len(p) >= 2
-
-    def es_candidato(linea: str) -> bool:
-        if len(linea) < 4 or len(linea) > 65:
-            return False
-        if any(k in linea.lower() for k in KEYS_MAL):
-            return False
-        if any(ch in linea for ch in CHARS_MAL):
-            return False
-        if re.search(r'\d{4}', linea):
-            return False
-        if re.search(r'\d{5,}', linea):
-            return False
-        if PATRON_DIRECCION.search(linea):
-            return False
-        palabras = linea.split()
-        if len(palabras) < 1 or len(palabras) > 6:
-            return False
-        palabras_norm = {p.lower().strip('.,;:') for p in palabras}
-        if palabras_norm & NO_NOMBRE:
-            return False
-        validas = [p for p in palabras if es_palabra_nombre(p)]
-        return len(validas) >= 1
-
-    lineas = [l.strip() for l in texto.splitlines() if l.strip()][:25]
-
-    # Intentar lineas individuales primero
-    for linea in lineas:
-        if not es_candidato(linea):
-            continue
-        palabras = linea.split()
-        validas = [p for p in palabras if es_palabra_nombre(p)]
-        if len(validas) >= 2:
-            if linea == linea.upper():
-                linea = linea.title()
-            return linea
-
-    # Intentar unir dos lineas consecutivas cortas (nombre partido en dos renglones)
-    for i in range(len(lineas) - 1):
-        l1, l2 = lineas[i], lineas[i + 1]
-        if es_candidato(l1) and es_candidato(l2):
-            unida = l1 + " " + l2
-            if len(unida) <= 65:
-                palabras = unida.split()
-                validas = [p for p in palabras if es_palabra_nombre(p)]
-                if len(validas) >= 3:
-                    if unida == unida.upper():
-                        unida = unida.title()
-                    return unida
-
-    return None
 def analizar_proceso(proceso_id: int, db: Session) -> dict:
     limpiar_cancelacion(proceso_id)
 
@@ -204,9 +103,8 @@ def analizar_proceso(proceso_id: int, db: Session) -> dict:
             db.add(analisis)
 
         try:
-            analisis.estado       = EstadoAnalisis.PROCESANDO
-            analisis.progress_msg = "[PROG:0] Iniciando..."
-            analisis.error_msg    = None  # Limpiar error previo al reiniciar
+            analisis.estado    = EstadoAnalisis.PROCESANDO
+            analisis.error_msg = "[PROG:0] Iniciando..."
             db.commit()
             db.refresh(analisis)
         except Exception as e:
@@ -237,6 +135,8 @@ def analizar_proceso(proceso_id: int, db: Session) -> dict:
                     )
 
                 candidato.texto_cv = texto
+                # Extraer datos del texto del PDF como primer intento (la IA puede corregir)
+                if not candidato.nombre:   candidato.nombre   = extraer_nombre(texto)
                 if not candidato.email:    candidato.email    = extraer_email(texto)
                 if not candidato.telefono: candidato.telefono = extraer_telefono(texto)
                 db.commit()
@@ -275,50 +175,20 @@ def analizar_proceso(proceso_id: int, db: Session) -> dict:
             _prog(analisis, db, 85,
                   "[{}/{}] Guardando resultado...".format(idx, total))
 
-            # Actualizar datos del candidato — commit separado para asegurar persistencia
-            nombre_ia    = resultado.get("nombre")
-            email_ia     = resultado.get("email")
-            telefono_ia  = resultado.get("telefono")
+            # La IA puede completar/corregir datos que el regex no encontró
+            if resultado.get("nombre")   and not candidato.nombre:   candidato.nombre   = resultado["nombre"]
+            if resultado.get("email")    and not candidato.email:    candidato.email    = resultado["email"]
+            if resultado.get("telefono") and not candidato.telefono: candidato.telefono = resultado["telefono"]
 
-            # Fallback: extraer nombre del texto del CV si la IA no lo devolvio
-            if not nombre_ia and candidato.texto_cv:
-                nombre_ia = _extraer_nombre_fallback(candidato.texto_cv)
-
-            if nombre_ia:   candidato.nombre   = nombre_ia.strip()
-            if email_ia:    candidato.email    = email_ia.strip()
-            if telefono_ia: candidato.telefono = telefono_ia.strip()
-
-            # Commit y refresh explicito del candidato ANTES de continuar
-            try:
-                db.commit()
-                db.refresh(candidato)
-                logger.info("  Candidato guardado: nombre='%s' email='%s'", candidato.nombre, candidato.email)
-            except Exception as e_c:
-                logger.warning("  Error guardando candidato: %s", e_c)
-                db.rollback()
-
-            # -- 95%: Recalcular puntaje desde criterios (no confiar en el valor del modelo)
-            criterios_ia = resultado.get("criterios") or []
-            tiene_peso = criterios_ia and criterios_ia[0].get("peso") is not None
-            if tiene_peso and criterios_ia:
-                puntaje_calculado = round(sum(
-                    (c.get("peso", 0) * c.get("puntaje", 0) / 100)
-                    for c in criterios_ia
-                ), 1)
-            else:
-                puntajes = [c.get("puntaje", 0) for c in criterios_ia if c.get("puntaje") is not None]
-                puntaje_calculado = round(sum(puntajes) / len(puntajes), 1) if puntajes else round(float(resultado.get("puntaje_total", 0)), 1)
-
-            logger.info("  Puntaje IA=%s, recalculado=%s", resultado.get("puntaje_total"), puntaje_calculado)
-
+            # -- 95%: Guardar analisis ------------------------------------
             _prog(analisis, db, 95,
-                  "[{}/{}] Puntaje: {:.0f}%".format(idx, total, puntaje_calculado))
+                  "[{}/{}] Puntaje: {:.0f}%".format(idx, total, resultado["puntaje_total"]))
 
             analisis.estado        = EstadoAnalisis.COMPLETADO
-            analisis.puntaje_total = puntaje_calculado
+            analisis.puntaje_total = float(resultado["puntaje_total"])
             analisis.detalle_json  = resultado["criterios"]
             analisis.resumen_ia    = resultado["resumen"]
-            analisis.proveedor_ia  = "{}/{}".format(settings.IA_PROVIDER, settings.OLLAMA_MODEL) if settings.IA_PROVIDER == "ollama" else settings.IA_PROVIDER
+            analisis.proveedor_ia  = settings.IA_PROVIDER
             analisis.procesado_en  = datetime.now(timezone.utc)
             analisis.error_msg     = None
             analisis.progress_msg  = None  # Limpiar progreso al completar
