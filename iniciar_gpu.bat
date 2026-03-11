@@ -1,169 +1,132 @@
 @echo off
 chcp 65001 >nul
+setlocal enabledelayedexpansion
 title Sistema CV - Iniciando (GPU)...
 
-:: ── Detectar ruta base ───────────────────────────────────────────────────────
 set "BASE=%~dp0"
 if "%BASE:~-1%"=="\" set "BASE=%BASE:~0,-1%"
 
+if not exist "%BASE%\logs" mkdir "%BASE%\logs"
+
 echo.
 echo  ============================================================
-echo   SISTEMA CV  —  IA de Reclutamiento Local
-echo   Modo: GPU (NVIDIA CUDA)
+echo   SISTEMA CV  --  IA de Reclutamiento Local (GPU/CUDA)
 echo   Ruta: %BASE%
 echo  ============================================================
 echo.
 
-:: ── Verificar backend\venv ───────────────────────────────────────────────────
-if not exist "%BASE%\backend\venv\Scripts\activate.bat" (
-    echo  [ERROR] Entorno virtual no encontrado.
-    echo.
-    echo  Solución: abre una terminal en la carpeta del proyecto y ejecuta:
-    echo    cd backend
-    echo    python -m venv venv
-    echo    venv\Scripts\activate
-    echo    pip install -r requirements.txt
-    echo.
-    pause
-    exit /b 1
-)
-
-:: ── Verificar .env ───────────────────────────────────────────────────────────
-if not exist "%BASE%\backend\.env" (
-    echo  [ERROR] No se encontró backend\.env
-    echo.
-    if exist "%BASE%\backend\.env.example" (
-        echo  Copiando .env.example -> .env ...
-        copy "%BASE%\backend\.env.example" "%BASE%\backend\.env" >nul
-        echo  [!] Edita backend\.env y agrega una SECRET_KEY antes de continuar.
-    )
-    echo.
-    pause
-    exit /b 1
-)
-
-:: ── Verificar Node.js ────────────────────────────────────────────────────────
-node --version >nul 2>&1
+:: ---- Verificar GPU NVIDIA -----------------------------------------------
+echo  [*] Verificando GPU NVIDIA...
+nvidia-smi >nul 2>&1
 if errorlevel 1 (
-    echo  [ERROR] Node.js no está instalado o no está en el PATH.
-    echo  Descargalo desde https://nodejs.org
-    echo.
-    pause
-    exit /b 1
+    echo  [AVISO] nvidia-smi no responde. La IA usara CPU como fallback.
+) else (
+    for /f "tokens=*" %%g in ('nvidia-smi --query-gpu=name --format=csv,noheader 2^>nul') do echo  [OK] GPU: %%g
 )
 
-:: ── Instalar dependencias frontend si faltan ─────────────────────────────────
-if not exist "%BASE%\frontend\node_modules" (
-    echo  [+] Instalando dependencias del frontend (primera vez)...
-    cd /d "%BASE%\frontend"
-    npm install --silent
-    cd /d "%BASE%"
-    echo  [OK] Dependencias del frontend instaladas.
+:: ---- Verificar Python ---------------------------------------------------
+python --version >nul 2>&1
+if errorlevel 1 (
+    echo  [ERROR] Python no encontrado. Ejecuta instalar.bat primero.
+    pause & exit /b 1
 )
 
-:: ── 1. Ollama con GPU ────────────────────────────────────────────────────────
-echo  [1/3] Configurando GPU y arrancando Ollama...
+:: ---- Verificar dependencias ---------------------------------------------
+python -c "import fastapi, uvicorn, sqlalchemy" >nul 2>&1
+if errorlevel 1 (
+    echo  [ERROR] Dependencias de Python faltantes. Ejecuta instalar.bat primero.
+    pause & exit /b 1
+)
 
-:: Matar Ollama si ya corría (para relanzarlo con las variables GPU)
-taskkill /IM ollama.exe /F >nul 2>&1
-timeout /t 2 /nobreak >nul
+:: ---- Verificar frontend buildeado --------------------------------------
+if not exist "%BASE%\frontend\dist\index.html" (
+    echo  [ERROR] Frontend no buildeado. Ejecuta instalar.bat primero.
+    pause & exit /b 1
+)
 
-:: Buscar ollama.exe
+:: ---- Verificar .env -----------------------------------------------------
+if not exist "%BASE%\backend\.env" (
+    echo  [ERROR] No se encontro backend\.env. Ejecuta instalar.bat primero.
+    pause & exit /b 1
+)
+
+:: ---- 1. Ollama con CUDA -------------------------------------------------
+echo  [1/2] Verificando Ollama...
+curl -s --max-time 2 http://localhost:11434 >nul 2>&1
+if not errorlevel 1 (
+    echo  [OK] Ollama ya esta corriendo.
+    goto :backend
+)
+
 set "OLLAMA_EXE="
 if exist "%LOCALAPPDATA%\Programs\Ollama\ollama.exe" set "OLLAMA_EXE=%LOCALAPPDATA%\Programs\Ollama\ollama.exe"
-if "%OLLAMA_EXE%"=="" if exist "C:\Program Files\Ollama\ollama.exe"       set "OLLAMA_EXE=C:\Program Files\Ollama\ollama.exe"
+if "%OLLAMA_EXE%"=="" if exist "C:\Program Files\Ollama\ollama.exe" set "OLLAMA_EXE=C:\Program Files\Ollama\ollama.exe"
 if "%OLLAMA_EXE%"=="" where ollama >nul 2>&1 && set "OLLAMA_EXE=ollama"
 
 if "%OLLAMA_EXE%"=="" (
-    echo  [ERROR] Ollama no encontrado.
-    echo  Descargalo desde https://ollama.com y vuelve a intentar.
-    echo.
-    pause
-    exit /b 1
+    echo  [AVISO] Ollama no encontrado. Continuando sin IA...
+    goto :backend
 )
 
-echo  Ollama: %OLLAMA_EXE%
-echo  Iniciando con soporte CUDA...
+echo  Iniciando Ollama ^(GPU/CUDA^)...
+set OLLAMA_HOST=127.0.0.1:11434
+start "SistemaCV-Ollama" /min cmd /c "set OLLAMA_CUDA=1 && "%OLLAMA_EXE%" serve"
 
-:: Variables de entorno GPU — deben existir en el proceso de Ollama
-start "SistemaCV-Ollama" /min cmd /c "set OLLAMA_NUM_GPU=999 && set OLLAMA_GPU_LAYERS=999 && set CUDA_VISIBLE_DEVICES=0 && set OLLAMA_FLASH_ATTENTION=1 && set OLLAMA_HOST=127.0.0.1:11434 && "%OLLAMA_EXE%" serve"
-
-:: Esperar hasta 20 s a que Ollama responda
-echo  Esperando que Ollama arranque...
 set /a TRIES=0
 :wait_ollama
 timeout /t 2 /nobreak >nul
 set /a TRIES+=1
 curl -s --max-time 2 http://localhost:11434 >nul 2>&1
 if not errorlevel 1 goto :ollama_ok
-if %TRIES% GEQ 10 (
-    echo  [!] Ollama tardó demasiado. Continúa de todas formas...
+if %TRIES% GEQ 7 (
+    echo  [!] Ollama tardo demasiado. Continuando...
     goto :backend
 )
 goto :wait_ollama
 :ollama_ok
-echo  [OK] Ollama listo en http://localhost:11434 (GPU activa)
+echo  [OK] Ollama listo ^(GPU^).
 
-:: ── 2. Backend ───────────────────────────────────────────────────────────────
+:: ---- 2. Backend ---------------------------------------------------------
 :backend
-echo  [2/3] Iniciando Backend...
-start "SistemaCV-Backend" /min cmd /k "cd /d "%BASE%\backend" && call venv\Scripts\activate.bat && uvicorn main:app --host 127.0.0.1 --port 8000"
+echo  [2/2] Iniciando Backend...
 
-:: Esperar al health endpoint
+for /f "tokens=5" %%a in ('netstat -aon 2^>nul ^| findstr ":8000 "') do (
+    taskkill /PID %%a /F >nul 2>&1
+)
+
+set "LOG=%BASE%\logs\backend.log"
+echo [%DATE% %TIME%] Iniciando backend (GPU)... > "%LOG%"
+
+start "SistemaCV-Backend" /min cmd /c "cd /d "%BASE%\backend" && python -m uvicorn main:app --host 127.0.0.1 --port 8000 --no-access-log >> "%LOG%" 2>&1"
+
 echo  Esperando que el Backend responda...
 set /a TRIES=0
 :wait_backend
-timeout /t 2 /nobreak >nul
+timeout /t 3 /nobreak >nul
 set /a TRIES+=1
-curl -s --max-time 2 http://localhost:8000/health >nul 2>&1
+curl -s --max-time 3 http://127.0.0.1:8000/health >nul 2>&1
 if not errorlevel 1 goto :backend_ok
 if %TRIES% GEQ 10 (
-    echo  [!] Backend tardó demasiado. Continúa de todas formas...
-    goto :frontend
+    echo  [!] Backend tardo demasiado. Comprueba logs\backend.log
+    goto :open_browser
 )
 goto :wait_backend
 :backend_ok
-echo  [OK] Backend listo en http://localhost:8000
+echo  [OK] Backend listo en http://127.0.0.1:8000
 
-:: ── 3. Frontend ──────────────────────────────────────────────────────────────
-:frontend
-echo  [3/3] Iniciando Frontend...
-start "SistemaCV-Frontend" /min cmd /k "cd /d "%BASE%\frontend" && npm run dev"
-
-:: Esperar al frontend
-echo  Esperando que el Frontend responda...
-set /a TRIES=0
-:wait_frontend
-timeout /t 2 /nobreak >nul
-set /a TRIES+=1
-curl -s --max-time 2 http://localhost:5173 >nul 2>&1
-if not errorlevel 1 goto :frontend_ok
-if %TRIES% GEQ 8 (
-    echo  [!] Frontend tardó demasiado. Abriendo navegador igual...
-    goto :open_browser
-)
-goto :wait_frontend
-:frontend_ok
-echo  [OK] Frontend listo en http://localhost:5173
-
-:: ── Abrir navegador ──────────────────────────────────────────────────────────
 :open_browser
 timeout /t 1 /nobreak >nul
-echo  Abriendo navegador...
-start http://localhost:5173
+start http://127.0.0.1:8000
 
-:: ── Resumen ──────────────────────────────────────────────────────────────────
 echo.
-echo  ============================================================
-echo   Sistema iniciado correctamente  (Modo GPU)
+echo  +--------------------------------------------+
+echo  ^|   Sistema CV RRHH iniciado ^(GPU/CUDA^)     ^|
+echo  ^|                                            ^|
+echo  ^|   Aplicacion: http://127.0.0.1:8000       ^|
+echo  ^|   Para detener: ejecuta detener.bat        ^|
+echo  +--------------------------------------------+
 echo.
-echo   Frontend  ->  http://localhost:5173
-echo   Backend   ->  http://localhost:8000
-echo   Ollama    ->  http://localhost:11434
+echo  -- Log en tiempo real ^(Ctrl+C para salir^) --
 echo.
-echo   Para verificar GPU:  nvidia-smi
-echo   Para detener todos los servicios: ejecuta  detener.bat
-echo  ============================================================
-echo.
-echo  Esta ventana puede cerrarse de forma segura.
-pause
+
+powershell -Command "Get-Content '%BASE%\logs\backend.log' -Wait -Tail 20"

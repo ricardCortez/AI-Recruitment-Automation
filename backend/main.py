@@ -87,3 +87,23 @@ app.include_router(config.router,    prefix=f"{API_PREFIX}/config",   tags=["Con
 async def health_check():
     """Verificar que el servidor está corriendo."""
     return {"status": "ok", "app": settings.APP_NAME, "version": settings.APP_VERSION}
+
+
+# ── Servir frontend estático ────────────────────────────────────────────────
+from pathlib import Path as _Path
+from fastapi.responses import FileResponse as _FileResponse
+
+_FRONTEND_DIST = _Path(__file__).parent.parent / "frontend" / "dist"
+
+if _FRONTEND_DIST.exists():
+    _assets = _FRONTEND_DIST / "assets"
+    if _assets.exists():
+        app.mount("/assets", StaticFiles(directory=str(_assets)), name="assets")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def serve_frontend(full_path: str):
+        """Serve React SPA for all non-API routes."""
+        index = _FRONTEND_DIST / "index.html"
+        if index.exists():
+            return _FileResponse(str(index))
+        return {"error": "Frontend no buildeado. Ejecuta: cd frontend && npm run build"}
