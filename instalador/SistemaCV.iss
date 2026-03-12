@@ -134,21 +134,19 @@ spanish.RequirementsText=Este software requiere:%n%n  %b Windows 10 / 11 (64-bit
 Name: "full";    Description: "Instalacion completa (recomendada)"
 Name: "custom";  Description: "Instalacion personalizada"; Flags: iscustom
 
-
 ; ===========================================================================
 ;  [Components] — Componentes seleccionables
 ; ===========================================================================
 [Components]
-Name: "main";        Description: "Sistema CV RRHH (obligatorio)";                      Types: full custom; Flags: fixed
-Name: "shortcuts";   Description: "Accesos directos en el Escritorio";                  Types: full custom
-Name: "startmenu";   Description: "Accesos directos en el Menu Inicio";                 Types: full custom
-; Grupo de dependencias: el usuario puede marcar/desmarcar cada una
-; [Code] InitializeWizard() las desmarca automaticamente si ya estan instaladas
-Name: "deps";        Description: "Instalar dependencias automaticamente";               Types: full custom
-Name: "deps\python"; Description: "Python 3.12   (requerido — motor del backend)";      Types: full custom
-Name: "deps\node";   Description: "Node.js 20    (requerido — construir interfaz web)"; Types: full custom
-Name: "deps\ollama"; Description: "Ollama         (requerido — motor de IA local)";     Types: full custom
+Name: "main";        Description: "Sistema CV RRHH (obligatorio)"; Types: full custom; Flags: fixed
+Name: "shortcuts";   Description: "Accesos directos en el Escritorio"; Types: full custom
+Name: "startmenu";   Description: "Accesos directos en el Menu Inicio"; Types: full custom
 
+Name: "deps";        Description: "Instalar dependencias automaticamente"; Types: full custom
+
+Name: "deps\python"; Description: "Instalar Python 3.12 (requerido para backend)"; Types: full custom; Flags: checkablealone
+Name: "deps\node"; Description: "Instalar Node.js LTS (requerido para frontend)"; Types: full custom; Flags: checkablealone
+Name: "deps\ollama"; Description: "Instalar Ollama (motor local de IA)"; Types: full custom; Flags: checkablealone
 
 ; ===========================================================================
 ;  [Tasks] — Tareas opcionales durante la instalacion
@@ -483,7 +481,7 @@ var
   PythonYaInstalado:      Boolean;
   NodeYaInstalado:        Boolean;
   OllamaYaInstalado:      Boolean;
-  ComponentPageInitialized: Boolean;
+  //ComponentPageInitialized: Boolean;
 
 
 // ---------------------------------------------------------------------------
@@ -533,7 +531,7 @@ begin
   PythonYaInstalado       := PythonInstalado();
   NodeYaInstalado         := NodeInstalado();
   OllamaYaInstalado       := OllamaInstalado();
-  ComponentPageInitialized := False;
+  //ComponentPageInitialized := False;
 end;
 
 
@@ -544,53 +542,53 @@ end;
 //   y actualiza su descripcion para informar al usuario.
 //   Solo se ejecuta una vez (ComponentPageInitialized evita re-ejecucion).
 // ---------------------------------------------------------------------------
-procedure CurPageChanged(CurPageID: Integer);
-var
-  CompList: TNewCheckListBox;
-  I: Integer;
-  Desc: String;
-begin
-  if (CurPageID = wpSelectComponents) and not ComponentPageInitialized then
-  begin
-    ComponentPageInitialized := True;
-    CompList := WizardForm.ComponentsList;
-
-    // Verificar que la lista tenga items antes de iterar
-    if CompList.Items.Count = 0 then Exit;
-
-    for I := 0 to CompList.Items.Count - 1 do
-    begin
-      // Segunda linea de defensa contra index out of bounds
-      if I >= CompList.Items.Count then Break;
-
-      try
-        Desc := CompList.Items[I];
-
-        // Desmarcar Python si ya esta instalado
-        if (Pos('Python', Desc) > 0) and PythonYaInstalado then
-        begin
-          CompList.Checked[I] := False;
-          CompList.Items[I]   := Desc + '  [ya instalado]';
-        end
-        // Desmarcar Node si ya esta instalado
-        else if (Pos('Node', Desc) > 0) and NodeYaInstalado then
-        begin
-          CompList.Checked[I] := False;
-          CompList.Items[I]   := Desc + '  [ya instalado]';
-        end
-        // Desmarcar Ollama si ya esta instalado
-        else if (Pos('Ollama', Desc) > 0) and OllamaYaInstalado then
-        begin
-          CompList.Checked[I] := False;
-          CompList.Items[I]   := Desc + '  [ya instalado]';
-        end;
-
-      except
-        // Si un item falla, continuar con el siguiente sin romper el wizard
-      end;
-    end;
-  end;
-end;
+//procedure CurPageChanged(CurPageID: Integer);
+//var
+//  CompList: TNewCheckListBox;
+//  I: Integer;
+//  Desc: String;
+//begin
+//  if (CurPageID = wpSelectComponents) and not ComponentPageInitialized then
+//  begin
+//    ComponentPageInitialized := True;
+//    CompList := WizardForm.ComponentsList;
+//
+//    // Verificar que la lista tenga items antes de iterar
+//    if CompList.Items.Count = 0 then Exit;
+//
+//    for I := 0 to CompList.Items.Count - 1 do
+//    begin
+//      // Segunda linea de defensa contra index out of bounds
+//      if I >= CompList.Items.Count then Break;
+//
+ //     try
+//        Desc := CompList.Items[I];
+//
+//        // Desmarcar Python si ya esta instalado
+//        if (Pos('Python', Desc) > 0) and PythonYaInstalado then
+//        begin
+//          CompList.Checked[I] := False;
+//          CompList.Items[I]   := Desc + '  [ya instalado]';
+//        end
+//        // Desmarcar Node si ya esta instalado
+//        else if (Pos('Node', Desc) > 0) and NodeYaInstalado then
+//        begin
+//          CompList.Checked[I] := False;
+//          CompList.Items[I]   := Desc + '  [ya instalado]';
+//        end
+//        // Desmarcar Ollama si ya esta instalado
+//        else if (Pos('Ollama', Desc) > 0) and OllamaYaInstalado then
+//        begin
+//          CompList.Checked[I] := False;
+//          CompList.Items[I]   := Desc + '  [ya instalado]';
+//        end;
+//
+//      except
+//        // Si un item falla, continuar con el siguiente sin romper el wizard
+//      end;
+//    end;
+//  end;
+//end;
 
 
 // ---------------------------------------------------------------------------
@@ -667,34 +665,28 @@ end;
 // ---------------------------------------------------------------------------
 procedure RunInstallWithProgress(const AppDir: String);
 var
-  LogFile: String;
   ResultCode: Integer;
-  Elapsed: Integer;
-  MaxWait: Integer;
+  Params: String;
 begin
-  LogFile := AppDir + '\instalacion.log';
-  MaxWait := 3600;  // Timeout maximo: 1 hora
+  Log('Ejecutando instalador principal...');
 
-  ProgressPage := CreateOutputProgressPage(
-    'Instalando dependencias del sistema',
-    'Por favor espere. Una ventana de consola muestra el detalle.' + #13#10 +
-    'Este proceso puede tardar 10-30 minutos segun su conexion.'
-  );
-  ProgressPage.Show;
-  ProgressPage.SetProgress(0, 100);
-  ProgressPage.SetText('', 'Iniciando instalador de dependencias...');
-  WizardForm.Update;
-
-  // Abrir instalar.bat en ventana CMD visible.
-  // Se pasan como variables de entorno los componentes seleccionados:
-  //   INSTALL_PYTHON / INSTALL_NODE / INSTALL_OLLAMA = 1 (instalar) o 0 (omitir)
-  // instalar.bat los lee para saltar pasos que el usuario desmarco.
-  ShellExec('open', ExpandConstant('{sys}\cmd.exe'),
+  Params :=
     '/c set INSTALL_PYTHON=' + IntToStr(Ord(WizardIsComponentSelected('deps\python'))) +
-    ' && set INSTALL_NODE='   + IntToStr(Ord(WizardIsComponentSelected('deps\node')))   +
+    ' && set INSTALL_NODE='   + IntToStr(Ord(WizardIsComponentSelected('deps\node'))) +
     ' && set INSTALL_OLLAMA=' + IntToStr(Ord(WizardIsComponentSelected('deps\ollama'))) +
-    ' && call "' + AppDir + '\instalar.bat"',
-    AppDir, SW_SHOWNORMAL, ewNoWait, ResultCode);
+    ' && call instalar.bat';
+
+  Exec(
+    ExpandConstant('{cmd}'),
+    Params,
+    ExpandConstant('{app}'),
+    SW_SHOW,
+    ewWaitUntilTerminated,
+    ResultCode
+  );
+
+  Log('Instalador terminado. Codigo: ' + IntToStr(ResultCode));
+end;
 
   // Esperar hasta 15 segundos a que aparezca el log
   Elapsed := 0;
@@ -748,7 +740,7 @@ var
   TmpDir: String;
   ResultCode: Integer;
 begin
-  if CurStep = ssInstall then
+  if CurStep = ssPostInstall then
   begin
     TmpDir := ExpandConstant('{tmp}');
 
@@ -760,7 +752,7 @@ begin
       WizardForm.Update;
       Exec(TmpDir + '\python-3.12.0-amd64.exe',
            '/quiet InstallAllUsers=1 PrependPath=1 Include_pip=1',
-           '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+           '', SW_SHOW, ewWaitUntilTerminated, ResultCode);
     end;
 
     // Instalar Node.js desde bundle (si fue empaquetado y seleccionado)
@@ -771,7 +763,7 @@ begin
       WizardForm.Update;
       Exec(ExpandConstant('{sys}\msiexec.exe'),
            '/i "' + TmpDir + '\node-v20.11.0-x64.msi" /quiet /norestart',
-           '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+           '', SW_SHOW, ewWaitUntilTerminated, ResultCode);
     end;
 
     // Instalar Ollama desde bundle (si fue empaquetado y seleccionado)
@@ -781,7 +773,7 @@ begin
       WizardForm.StatusLabel.Caption := 'Instalando Ollama...';
       WizardForm.Update;
       Exec(TmpDir + '\OllamaSetup.exe', '/S', '',
-           SW_HIDE, ewWaitUntilTerminated, ResultCode);
+           SW_SHOW, ewWaitUntilTerminated, ResultCode);
     end;
 
     // Ejecutar instalar.bat con pantalla de progreso

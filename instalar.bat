@@ -11,6 +11,10 @@ set "YA_EXISTIAN="
 set "PYTHON_EXE="
 set "NPM_EXE="
 
+if "%INSTALL_PYTHON%"=="" set INSTALL_PYTHON=1
+if "%INSTALL_NODE%"=="" set INSTALL_NODE=1
+if "%INSTALL_OLLAMA%"=="" set INSTALL_OLLAMA=1
+
 echo.
 echo  ============================================================
 echo   SISTEMA CV RRHH  --  Instalador
@@ -238,7 +242,7 @@ call :log "--- PASO 4: Dependencias Python ---"
 echo  [4/10] Instalando dependencias Python...
 echo  (esto puede tardar un momento)
 
-"%PYTHON_EXE%" -m pip install -r "%BASE%backend\requirements.txt" --no-warn-script-location --quiet
+"%PYTHON_EXE%" -m pip install -r "%BASE%backend\requirements.txt" --no-warn-script-location
 if errorlevel 1 (
     call :log "  [ERROR] Fallo la instalacion de dependencias Python."
     call :log "          Intentando con --user..."
@@ -403,44 +407,19 @@ cd /d "%BASE%"
 
 :paso10
 :: ===========================================================================
-:: PASO 10 -- Descargar modelo IA
+:: PASO 10 -- Preparar modelo IA (descarga en primer inicio)
 :: ===========================================================================
 call :log "--- PASO 10: Modelo IA ---"
-echo  [10/10] Descargando modelo IA qwen2.5:7b...
+echo  [10/10] Preparando modelo IA...
+
 echo.
-echo  *** AVISO: La descarga del modelo puede tardar 10-20 minutos ***
-echo  *** Requiere ~4.7 GB de espacio libre                        ***
+echo  El modelo de IA (qwen2.5:7b) no se descargara durante la instalacion.
+echo  Se descargara automaticamente la primera vez que inicies el sistema.
+echo  Esto evita que el instalador tarde demasiado tiempo.
 echo.
 
-:: Buscar ollama por ruta absoluta
-set "OLLAMA_BIN="
-if exist "%LOCALAPPDATA%\Programs\Ollama\ollama.exe" set "OLLAMA_BIN=%LOCALAPPDATA%\Programs\Ollama\ollama.exe"
-if not defined OLLAMA_BIN if exist "C:\Program Files\Ollama\ollama.exe" set "OLLAMA_BIN=C:\Program Files\Ollama\ollama.exe"
-if not defined OLLAMA_BIN (
-    where ollama >nul 2>&1 && set "OLLAMA_BIN=ollama"
-)
-
-if not defined OLLAMA_BIN (
-    call :log "  [AVISO] ollama no encontrado. Saltar descarga del modelo."
-    call :log "          Ejecuta manualmente: ollama pull qwen2.5:7b"
-    goto :resumen
-)
-
-:: Iniciar Ollama en background para la descarga
-call :log "  Iniciando Ollama en background..."
-start /B "" "%OLLAMA_BIN%" serve >nul 2>&1
-timeout /t 5 /nobreak >nul
-
-call :log "  Descargando qwen2.5:7b (puede tardar varios minutos)..."
-"%OLLAMA_BIN%" pull qwen2.5:7b
-if errorlevel 1 (
-    call :log "  [ERROR] No se pudo descargar qwen2.5:7b"
-    call :log "          Intenta manualmente: ollama pull qwen2.5:7b"
-    set /a ERRORES+=1
-) else (
-    call :log "  [OK] Modelo qwen2.5:7b descargado correctamente."
-    set "INSTALADOS=!INSTALADOS! ModeloIA"
-)
+call :log "  Modelo IA configurado para descarga automatica al iniciar el sistema."
+set "INSTALADOS=!INSTALADOS! ModeloIA(Pendiente)"
 
 :resumen
 :: ===========================================================================
