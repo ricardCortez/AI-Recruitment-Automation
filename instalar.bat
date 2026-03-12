@@ -10,6 +10,36 @@ set "INSTALADOS="
 set "YA_EXISTIAN="
 set "PYTHON_EXE="
 set "NPM_EXE="
+set "NODE_EXE="
+
+:: Deteccion temprana por ruta absoluta (independiente del PATH actual)
+for %%P in (
+    "%LOCALAPPDATA%\Programs\Python\Python312\python.exe"
+    "%LOCALAPPDATA%\Programs\Python\Python311\python.exe"
+    "C:\Program Files\Python312\python.exe"
+    "C:\Program Files\Python311\python.exe"
+    "C:\Python312\python.exe"
+    "C:\Python311\python.exe"
+) do (
+    if exist %%P if not defined PYTHON_EXE set "PYTHON_EXE=%%~P"
+)
+if not defined PYTHON_EXE where python >nul 2>&1 && set "PYTHON_EXE=python"
+
+for %%P in (
+    "C:\Program Files\nodejs\node.exe"
+    "C:\Program Files (x86)\nodejs\node.exe"
+) do (
+    if exist %%P if not defined NODE_EXE set "NODE_EXE=%%~P"
+)
+if not defined NODE_EXE where node >nul 2>&1 && set "NODE_EXE=node"
+
+for %%P in (
+    "C:\Program Files\nodejs\npm.cmd"
+    "C:\Program Files (x86)\nodejs\npm.cmd"
+) do (
+    if exist %%P if not defined NPM_EXE set "NPM_EXE=%%~P"
+)
+if not defined NPM_EXE where npm >nul 2>&1 && set "NPM_EXE=npm"
 
 if "%INSTALL_PYTHON%"=="" set INSTALL_PYTHON=1
 if "%INSTALL_NODE%"=="" set INSTALL_NODE=1
@@ -51,9 +81,17 @@ if "%INSTALL_PYTHON%"=="0" (
     goto :paso2
 )
 
-python -c "import sys; exit(0 if sys.version_info >= (3,11) else 1)" >nul 2>&1
+if defined PYTHON_EXE (
+    "!PYTHON_EXE!" -c "import sys; exit(0 if sys.version_info >= (3,11) else 1)" >nul 2>&1
+) else (
+    python -c "import sys; exit(0 if sys.version_info >= (3,11) else 1)" >nul 2>&1
+)
 if not errorlevel 1 (
-    for /f "tokens=*" %%v in ('python --version 2^>nul') do call :log "  [OK] %%v ya instalado."
+    if defined PYTHON_EXE (
+        for /f "tokens=*" %%v in ('"!PYTHON_EXE!" --version 2^>nul') do call :log "  [OK] %%v ya instalado."
+    ) else (
+        for /f "tokens=*" %%v in ('python --version 2^>nul') do call :log "  [OK] %%v ya instalado."
+    )
     set "YA_EXISTIAN=!YA_EXISTIAN! Python"
     goto :paso2
 )
@@ -79,7 +117,21 @@ if defined USER_PATH (set "PATH=!SYSTEM_PATH!;!USER_PATH!") else (set "PATH=!SYS
 :: Agregar rutas conocidas de Python como fallback
 set "PATH=%LOCALAPPDATA%\Programs\Python\Python312;%LOCALAPPDATA%\Programs\Python\Python312\Scripts;C:\Python312;C:\Python312\Scripts;C:\Program Files\Python312;C:\Program Files\Python312\Scripts;!PATH!"
 
-python --version >nul 2>&1
+:: Re-detectar Python con PATH actualizado
+set "PYTHON_EXE="
+for %%P in (
+    "%LOCALAPPDATA%\Programs\Python\Python312\python.exe"
+    "%LOCALAPPDATA%\Programs\Python\Python311\python.exe"
+    "C:\Program Files\Python312\python.exe"
+    "C:\Program Files\Python311\python.exe"
+    "C:\Python312\python.exe"
+    "C:\Python311\python.exe"
+) do (
+    if exist %%P if not defined PYTHON_EXE set "PYTHON_EXE=%%~P"
+)
+if not defined PYTHON_EXE set "PYTHON_EXE=python"
+
+"!PYTHON_EXE!" --version >nul 2>&1
 if errorlevel 1 (
     call :log "  [AVISO] Python instalado pero requiere reiniciar la consola."
     call :log "          Cierra y vuelve a ejecutar instalar.bat"
@@ -105,9 +157,17 @@ if "%INSTALL_NODE%"=="0" (
     goto :paso3
 )
 
-node -e "process.exit(parseInt(process.version.slice(1))>=18?0:1)" >nul 2>&1
+if defined NODE_EXE (
+    "!NODE_EXE!" -e "process.exit(parseInt(process.version.slice(1))>=18?0:1)" >nul 2>&1
+) else (
+    node -e "process.exit(parseInt(process.version.slice(1))>=18?0:1)" >nul 2>&1
+)
 if not errorlevel 1 (
-    for /f "tokens=*" %%v in ('node --version 2^>nul') do call :log "  [OK] Node.js %%v ya instalado."
+    if defined NODE_EXE (
+        for /f "tokens=*" %%v in ('"!NODE_EXE!" --version 2^>nul') do call :log "  [OK] Node.js %%v ya instalado."
+    ) else (
+        for /f "tokens=*" %%v in ('node --version 2^>nul') do call :log "  [OK] Node.js %%v ya instalado."
+    )
     set "YA_EXISTIAN=!YA_EXISTIAN! Node.js"
     goto :paso3
 )
@@ -133,7 +193,26 @@ if defined USER_PATH (set "PATH=!SYSTEM_PATH!;!USER_PATH!") else (set "PATH=!SYS
 :: Agregar rutas conocidas de Node como fallback
 set "PATH=C:\Program Files\nodejs;%APPDATA%\npm;!PATH!"
 
-node --version >nul 2>&1
+:: Re-detectar Node y npm con PATH actualizado
+set "NODE_EXE="
+for %%P in (
+    "C:\Program Files\nodejs\node.exe"
+    "C:\Program Files (x86)\nodejs\node.exe"
+) do (
+    if exist %%P if not defined NODE_EXE set "NODE_EXE=%%~P"
+)
+if not defined NODE_EXE set "NODE_EXE=node"
+
+set "NPM_EXE="
+for %%P in (
+    "C:\Program Files\nodejs\npm.cmd"
+    "C:\Program Files (x86)\nodejs\npm.cmd"
+) do (
+    if exist %%P if not defined NPM_EXE set "NPM_EXE=%%~P"
+)
+if not defined NPM_EXE set "NPM_EXE=npm"
+
+"!NODE_EXE!" --version >nul 2>&1
 if errorlevel 1 (
     call :log "  [AVISO] Node.js instalado pero requiere reiniciar la consola."
     call :log "          Cierra y vuelve a ejecutar instalar.bat"
@@ -262,32 +341,39 @@ if errorlevel 1 (
 :: ===========================================================================
 call :log "--- PASO 5: Build Frontend ---"
 echo  [5/10] Construyendo interfaz web...
-echo  (esto puede tardar varios minutos la primera vez)
+
+if not defined NPM_EXE (
+    call :log "  [ERROR] npm no encontrado. No se puede construir el frontend."
+    call :log "          Instala Node.js manualmente desde https://nodejs.org"
+    call :log "          Luego ejecuta instalar.bat nuevamente."
+    goto :error
+)
 
 cd /d "%BASE%frontend"
 
-call :log "  Instalando node_modules..."
-"%NPM_EXE%" install --prefer-offline --no-audit --no-fund
+call :log "  Instalando dependencias npm..."
+"%NPM_EXE%" install --loglevel error
 if errorlevel 1 (
-    call :log "  [WARN] npm install tuvo advertencias, intentando continuar..."
+    call :log "  [ERROR] npm install fallo."
+    cd /d "%BASE%"
+    goto :error
 )
 
-call :log "  Ejecutando npm run build..."
+call :log "  Compilando frontend..."
 "%NPM_EXE%" run build
 if errorlevel 1 (
-    call :log "  [ERROR] npm run build fallo. Intentando con npx vite build..."
-    "%NPM_EXE%" exec vite build
+    call :log "  [ERROR] npm run build fallo."
+    cd /d "%BASE%"
+    goto :error
 )
 
 cd /d "%BASE%"
 
 if not exist "%BASE%frontend\dist\index.html" (
-    call :log "  [ERROR CRITICO] El frontend no se construyo correctamente."
-    call :log "  Revisa instalacion.log para mas detalles."
-    set /a ERRORES+=1
-    goto :paso6
+    call :log "  [ERROR] El frontend no se genero correctamente."
+    goto :error
 )
-call :log "  [OK] Frontend construido correctamente."
+call :log "  [OK] Frontend construido: frontend\dist\index.html"
 
 :paso6
 :: ===========================================================================
@@ -310,7 +396,7 @@ del "%TEMP%\sk_tmp.txt" >nul 2>&1
 if exist "%BASE%.env.example" (
     call :log "  Copiando desde .env.example y configurando..."
     copy "%BASE%.env.example" "%BASE%backend\.env" >nul
-    powershell -Command "$f='%BASE%backend\.env'; $c=(Get-Content $f); $c=$c -replace 'SECRET_KEY=.*','SECRET_KEY=!SK!'; $c=$c -replace 'OLLAMA_MODEL=.*','OLLAMA_MODEL=qwen2.5:7b'; $c=$c -replace 'ADMIN_PASSWORD=','ADMIN_PASSWORD=Admin@2025!'; [IO.File]::WriteAllLines($f,$c)"
+    powershell -Command "$f='%BASE%backend\.env'; $c=(Get-Content $f); $c=$c -replace 'SECRET_KEY=.*','SECRET_KEY=!SK!'; $c=$c -replace 'OLLAMA_MODEL=.*','OLLAMA_MODEL=qwen2.5:7b'; $c=$c -replace 'ADMIN_PASSWORD=.*','ADMIN_PASSWORD=Admin@2025!'; [IO.File]::WriteAllLines($f,$c)"
 ) else (
     call :log "  Creando .env desde cero..."
     "%PYTHON_EXE%" -c "
@@ -459,8 +545,17 @@ echo.
 :: Centinela para deteccion automatica por el instalador .exe
 echo [INSTALACION_COMPLETA] >> "%LOG%"
 
-pause
 exit /b 0
+
+:error
+echo.
+echo  ================================================
+echo   INSTALACION INCOMPLETA - Revisa los errores
+echo   Log completo en: %LOG%
+echo  ================================================
+echo.
+pause
+exit /b 1
 
 :: ===========================================================================
 :: Subrutina: escribir en consola Y en log

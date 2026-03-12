@@ -3,7 +3,7 @@ Configuración central del sistema.
 Todas las variables se leen del archivo .env
 """
 
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field
 from pathlib import Path
 from functools import lru_cache
@@ -11,6 +11,13 @@ from typing import Optional
 
 
 class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=True,
+        extra="ignore",
+    )
+
     # ── Aplicación ────────────────────────────────────────────────────────
     APP_NAME: str = "Sistema CV"
     APP_VERSION: str = "1.0.0"
@@ -63,10 +70,6 @@ class Settings(BaseSettings):
     def MAX_FILE_SIZE_BYTES(self) -> int:
         return self.MAX_FILE_SIZE_MB * 1024 * 1024
 
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        case_sensitive = True
 
 
 @lru_cache()

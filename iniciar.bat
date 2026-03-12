@@ -8,6 +8,32 @@ if "%BASE:~-1%"=="\" set "BASE=%BASE:~0,-1%"
 
 if not exist "%BASE%\logs" mkdir "%BASE%\logs"
 
+:: Detectar Python por ruta absoluta
+set "PYTHON_EXE="
+for %%P in (
+    "%LOCALAPPDATA%\Programs\Python\Python312\python.exe"
+    "%LOCALAPPDATA%\Programs\Python\Python311\python.exe"
+    "C:\Program Files\Python312\python.exe"
+    "C:\Program Files\Python311\python.exe"
+    "C:\Python312\python.exe"
+    "C:\Python311\python.exe"
+) do (
+    if exist %%P if not defined PYTHON_EXE set "PYTHON_EXE=%%~P"
+)
+if not defined PYTHON_EXE where python >nul 2>&1 && set "PYTHON_EXE=python"
+if not defined PYTHON_EXE set "PYTHON_EXE=python"
+
+:: Detectar npm por ruta absoluta
+set "NPM_EXE="
+for %%P in (
+    "C:\Program Files\nodejs\npm.cmd"
+    "C:\Program Files (x86)\nodejs\npm.cmd"
+) do (
+    if exist %%P if not defined NPM_EXE set "NPM_EXE=%%~P"
+)
+if not defined NPM_EXE where npm >nul 2>&1 && set "NPM_EXE=npm"
+if not defined NPM_EXE set "NPM_EXE=npm"
+
 echo.
 echo  ============================================================
 echo   SISTEMA CV  --  IA de Reclutamiento Local (CPU)
@@ -25,19 +51,19 @@ echo  ============================================
 set ERRORES=0
 
 :: ---- Python --------------------------------------------------------------
-python --version >nul 2>&1
+"%PYTHON_EXE%" --version >nul 2>&1
 if errorlevel 1 (
     echo  [X] Python NO encontrado
     set ERRORES=1
 ) else (
-    for /f "tokens=2" %%V in ('python --version 2^>^&1') do echo  [OK] Python %%V
+    for /f "tokens=2" %%V in ('"%PYTHON_EXE%" --version 2^>^&1') do echo  [OK] Python %%V
 )
 
 :: ---- Paquetes Python criticos --------------------------------------------
-python -c "import fastapi, uvicorn, sqlalchemy, pdfplumber" >nul 2>&1
+"%PYTHON_EXE%" -c "import fastapi, uvicorn, sqlalchemy, pdfplumber" >nul 2>&1
 if errorlevel 1 (
     echo  [!] Dependencias Python incompletas - reinstalando...
-    pip install -r "%BASE%\backend\requirements.txt" --quiet --no-warn-script-location
+    "%PYTHON_EXE%" -m pip install -r "%BASE%\backend\requirements.txt" --quiet --no-warn-script-location
 ) else (
     echo  [OK] Dependencias Python instaladas
 )
@@ -51,8 +77,8 @@ if not exist "%BASE%\frontend\dist\index.html" (
     ) else (
         echo  [!] Frontend no buildeado - construyendo...
         cd /d "%BASE%\frontend"
-        npm install --quiet
-        npm run build
+        "%NPM_EXE%" install --quiet
+        "%NPM_EXE%" run build
         cd /d "%BASE%"
         if not exist "%BASE%\frontend\dist\index.html" (
             echo  [X] Fallo la construccion del frontend
@@ -119,8 +145,8 @@ if not exist "%BASE%\backend\.env" (
 if not exist "%BASE%\backend\database\sistema_cv.db" (
     echo  [!] Base de datos no encontrada - inicializando...
     cd /d "%BASE%\backend"
-    python migrate_v5.py >nul 2>&1
-    python -m app.db.seed >nul 2>&1
+    "%PYTHON_EXE%" migrate_v5.py >nul 2>&1
+    "%PYTHON_EXE%" -m app.db.seed >nul 2>&1
     cd /d "%BASE%"
     echo  [OK] Base de datos inicializada
 ) else (
@@ -164,7 +190,7 @@ if "%OLLAMA_EXE%"=="" (
 
 echo  Iniciando Ollama ^(CPU^)...
 set OLLAMA_HOST=127.0.0.1:11434
-start "SistemaCV-Ollama" /min cmd /c ""%OLLAMA_EXE%" serve"
+start "" /B "%OLLAMA_EXE%" serve >nul 2>&1
 
 set /a TRIES=0
 :wait_ollama
@@ -192,7 +218,18 @@ for /f "tokens=5" %%a in ('netstat -aon 2^>nul ^| findstr ":8000 "') do (
 set "LOG=%BASE%\logs\backend.log"
 echo [%DATE% %TIME%] Iniciando backend... > "%LOG%"
 
-start "SistemaCV-Backend" /min cmd /c "cd /d "%BASE%\backend" && python -m uvicorn main:app --host 127.0.0.1 --port 8000 --no-access-log >> "%LOG%" 2>&1"
+:: Escribir el comando de arranque en un .bat temporal
+set "BAKCMD=%TEMP%\sistemaCV_backend.bat"
+echo @echo off > "%BAKCMD%"
+echo cd /d "%BASE%\backend" >> "%BAKCMD%"
+echo "%PYTHON_EXE%" -m uvicorn main:app --host 127.0.0.1 --port 8000 --no-access-log 1^>^> "%LOG%" 2^>^&1 >> "%BAKCMD%"
+
+:: Lanzar el .bat completamente oculto via WScript (0 = sin ventana)
+set "VBSCMD=%TEMP%\sistemaCV_launch.vbs"
+echo Set sh = WScript.CreateObject("WScript.Shell") > "%VBSCMD%"
+echo sh.Run "cmd.exe /c ""%BAKCMD%""", 0, False >> "%VBSCMD%"
+wscript //nologo "%VBSCMD%"
+del "%VBSCMD%" >nul 2>&1
 
 echo  Esperando que el Backend responda...
 set /a TRIES=0
@@ -201,28 +238,27 @@ timeout /t 3 /nobreak >nul
 set /a TRIES+=1
 curl -s --max-time 3 http://127.0.0.1:8000/health >nul 2>&1
 if not errorlevel 1 goto :backend_ok
-if %TRIES% GEQ 10 (
-    echo  [!] Backend tardo demasiado. Comprueba logs\backend.log
-    goto :open_browser
-)
+if %TRIES% GEQ 10 goto :backend_error
 goto :wait_backend
-:backend_ok
-echo  [OK] Backend listo en http://127.0.0.1:8000
 
-:: ---- Abrir navegador ----------------------------------------------------
-:open_browser
+:backend_ok
+del "%BAKCMD%" >nul 2>&1
+echo  [OK] Backend listo en http://127.0.0.1:8000
 timeout /t 1 /nobreak >nul
 start http://127.0.0.1:8000
+echo.
+echo  Sistema CV iniciado. La aplicacion se abrio en el navegador.
+echo  Para detener el sistema ejecuta detener.bat
+echo.
+timeout /t 3 /nobreak >nul
+exit /b 0
 
+:backend_error
 echo.
-echo  +--------------------------------------------+
-echo  ^|   Sistema CV RRHH iniciado correctamente  ^|
-echo  ^|                                            ^|
-echo  ^|   Aplicacion: http://127.0.0.1:8000       ^|
-echo  ^|   Para detener: ejecuta detener.bat        ^|
-echo  +--------------------------------------------+
+echo  [ERROR] El backend no respondio en el tiempo esperado.
+echo  Revisa el log de errores a continuacion:
 echo.
-echo  -- Log en tiempo real ^(Ctrl+C para salir^) --
+type "%LOG%"
 echo.
-
-powershell -Command "Get-Content '%BASE%\logs\backend.log' -Wait -Tail 20"
+pause
+exit /b 1

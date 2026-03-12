@@ -97,7 +97,16 @@ for /f "tokens=5" %%a in ('netstat -aon 2^>nul ^| findstr ":8000 "') do (
 set "LOG=%BASE%\logs\backend.log"
 echo [%DATE% %TIME%] Iniciando backend (GPU)... > "%LOG%"
 
-start "SistemaCV-Backend" /min cmd /c "cd /d "%BASE%\backend" && python -m uvicorn main:app --host 127.0.0.1 --port 8000 --no-access-log >> "%LOG%" 2>&1"
+:: Lanzar completamente oculto via WScript (0 = sin ventana)
+set "BAKCMD=%TEMP%\sistemaCV_backend.bat"
+echo @echo off > "%BAKCMD%"
+echo cd /d "%BASE%\backend" >> "%BAKCMD%"
+echo python -m uvicorn main:app --host 127.0.0.1 --port 8000 --no-access-log 1^>^> "%LOG%" 2^>^&1 >> "%BAKCMD%"
+set "VBSCMD=%TEMP%\sistemaCV_launch.vbs"
+echo Set sh = WScript.CreateObject("WScript.Shell") > "%VBSCMD%"
+echo sh.Run "cmd.exe /c ""%BAKCMD%""", 0, False >> "%VBSCMD%"
+wscript //nologo "%VBSCMD%"
+del "%VBSCMD%" >nul 2>&1
 
 echo  Esperando que el Backend responda...
 set /a TRIES=0
@@ -126,7 +135,5 @@ echo  ^|   Aplicacion: http://127.0.0.1:8000       ^|
 echo  ^|   Para detener: ejecuta detener.bat        ^|
 echo  +--------------------------------------------+
 echo.
-echo  -- Log en tiempo real ^(Ctrl+C para salir^) --
-echo.
-
-powershell -Command "Get-Content '%BASE%\logs\backend.log' -Wait -Tail 20"
+timeout /t 3 /nobreak >nul
+exit /b 0
