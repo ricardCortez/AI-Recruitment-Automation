@@ -13,7 +13,21 @@
       "Bash(\"d:/Archivos/Desarrollo/Proyects/AI-Recruitment-Automation/detener.bat\":*)",
       "Bash(python3 -c \":*)",
       "Bash(python3:*)",
-      "Bash(cmd.exe /c \"type d:\\\\Archivos\\\\Desarrollo\\\\Proyects\\\\AI-Recruitment-Automation\\\\detener.bat\")"
+      "Bash(cmd.exe /c \"type d:\\\\Archivos\\\\Desarrollo\\\\Proyects\\\\AI-Recruitment-Automation\\\\detener.bat\")",
+      "Bash(d:/Proyectos/AI-Recruitment-Automation/backend/venv/Scripts/python.exe -c \"import fastapi, uvicorn, sqlalchemy, pdfplumber; print\\(''OK''\\)\")",
+      "Bash(venv/Scripts/python.exe -c \"from app.core.config import settings; print\\(''Settings OK:'', settings.SECRET_KEY[:10]\\)\")",
+      "Bash(venv/Scripts/python.exe -c \"from app.services.extractor_nombre import extraer_nombre_cv; print\\(extraer_nombre_cv\\(''Ricardo Cortez\\\\nIngeniero de Sistemas\\\\nricardo@mail.com\\\\n+51 999 999 999''\\)\\)\")",
+      "Bash(venv/Scripts/python.exe -c \"import main; print\\(''Main imported OK''\\)\")",
+      "Bash(python -c \"import fastapi\")",
+      "Bash(venv/Scripts/python.exe -c \":*)",
+      "Bash(taskkill /F /IM python.exe)",
+      "Bash(netstat -aon)",
+      "Read(//d/Proyectos/AI-Recruitment-Automation/**)",
+      "Bash(xargs -I{} taskkill /PID {} /F)",
+      "Bash(taskkill /PID 10700 /F)",
+      "Bash(curl -s -X POST \"http://127.0.0.1:8002/api/v1/auth/login\" -H \"Content-Type: application/x-www-form-urlencoded\" -d \"username=admin&password=Admin@2025!\")",
+      "Bash(python -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\(json.dumps\\(d, indent=2\\)\\)\")",
+      "Bash(head -20 grep -n \"modelo\\\\|qwen\\\\|llama\" /d/Proyectos/AI-Recruitment-Automation/backend/config.json)"
     ]
   }
 }

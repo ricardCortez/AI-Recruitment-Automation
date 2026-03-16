@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { procesoService } from '../services/procesoService'
+import { procesoService, cvsService } from '../services/procesoService'
 import AppLayout from '../components/layout/AppLayout'
 import { PageContainer } from '../components/ui/index.jsx'
 import { useTheme } from '../components/lg/ThemeContext'
@@ -169,11 +169,14 @@ export default function DetalleCandidato() {
 
   if (!T) return null
 
-  const [data,       setData]       = useState(null)
-  const [loading,    setLoading]    = useState(true)
-  const [reanalizar, setReanalizar] = useState(false)
-  const [progreso,   setProgreso]   = useState(null)
+  const [data,          setData]          = useState(null)
+  const [loading,       setLoading]       = useState(true)
+  const [reanalizar,    setReanalizar]    = useState(false)
+  const [progreso,      setProgreso]      = useState(null)
   const [showHistorial, setShowHistorial] = useState(false)
+  const [editandoNombre,  setEditandoNombre]  = useState(false)
+  const [nombreEditado,   setNombreEditado]   = useState('')
+  const [guardandoNombre, setGuardandoNombre] = useState(false)
 
   const cargar = () => {
     setLoading(true)
@@ -218,6 +221,31 @@ export default function DetalleCandidato() {
       setReanalizar(false)
       setProgreso(null)
     }
+  }
+
+  const handleGuardarNombre = async () => {
+    const trimmed = nombreEditado.trim()
+    if (!trimmed) { toast.error('El nombre no puede estar vacío.'); return }
+    setGuardandoNombre(true)
+    try {
+      await cvsService.actualizarNombre(candidatoId, trimmed)
+      // Actualizar estado local sin recargar todo
+      setData(prev => ({
+        ...prev,
+        candidato: { ...prev.candidato, nombre: trimmed },
+      }))
+      setEditandoNombre(false)
+      toast.success('Nombre actualizado.')
+    } catch {
+      toast.error('Error al guardar el nombre.')
+    } finally {
+      setGuardandoNombre(false)
+    }
+  }
+
+  const handleIniciarEdicion = () => {
+    setNombreEditado(data?.candidato?.nombre || '')
+    setEditandoNombre(true)
   }
 
   if (loading) return (
@@ -357,9 +385,68 @@ export default function DetalleCandidato() {
               {initials}
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 20, fontWeight: 800, color: T.t1, marginBottom: 6 }}>
-                {nombreDisplay}
-              </div>
+              {/* ── Nombre editable ── */}
+              {editandoNombre ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
+                  <input
+                    autoFocus
+                    value={nombreEditado}
+                    onChange={e => setNombreEditado(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') handleGuardarNombre()
+                      if (e.key === 'Escape') setEditandoNombre(false)
+                    }}
+                    style={{
+                      fontSize: 18, fontWeight: 700, color: T.t1,
+                      background: T.glass, border: `1.5px solid ${AC.blue}55`,
+                      borderRadius: 8, padding: '4px 10px',
+                      outline: 'none', minWidth: 220, maxWidth: 320,
+                    }}
+                  />
+                  <button
+                    onClick={handleGuardarNombre}
+                    disabled={guardandoNombre}
+                    style={{
+                      background: AC.green + '22', border: `1px solid ${AC.green}55`,
+                      borderRadius: 7, padding: '4px 12px', cursor: 'pointer',
+                      fontSize: 12, fontWeight: 700, color: AC.green,
+                    }}
+                  >
+                    {guardandoNombre ? '…' : '✓ Guardar'}
+                  </button>
+                  <button
+                    onClick={() => setEditandoNombre(false)}
+                    style={{
+                      background: 'transparent', border: `1px solid ${T.glassBorder}`,
+                      borderRadius: 7, padding: '4px 10px', cursor: 'pointer',
+                      fontSize: 12, color: T.t3,
+                    }}
+                  >
+                    ✕
+                  </button>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                  <span style={{ fontSize: 20, fontWeight: 800, color: T.t1 }}>
+                    {nombreDisplay}
+                  </span>
+                  <button
+                    onClick={handleIniciarEdicion}
+                    title="Editar nombre"
+                    style={{
+                      background: 'transparent', border: 'none', cursor: 'pointer',
+                      fontSize: 14, color: T.t3, padding: '2px 5px', borderRadius: 6,
+                      transition: 'color 0.15s',
+                      flexShrink: 0,
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.color = AC.blue}
+                    onMouseLeave={e => e.currentTarget.style.color = T.t3}
+                  >
+                    ✏️
+                  </button>
+                </div>
+              )}
+
               <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
                 {candidato.email    && <span style={{ fontSize: 13, color: T.t2 }}>📧 {candidato.email}</span>}
                 {candidato.telefono && <span style={{ fontSize: 13, color: T.t2 }}>📞 {candidato.telefono}</span>}

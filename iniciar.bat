@@ -8,8 +8,17 @@ if "%BASE:~-1%"=="\" set "BASE=%BASE:~0,-1%"
 
 if not exist "%BASE%\logs" mkdir "%BASE%\logs"
 
-:: Detectar Python por ruta absoluta
+:: ── Prioridad 1: Python del entorno virtual del proyecto (tiene todas las deps) ──
+set "VENV_PYTHON=%BASE%\backend\venv\Scripts\python.exe"
 set "PYTHON_EXE="
+
+if exist "%VENV_PYTHON%" (
+    set "PYTHON_EXE=%VENV_PYTHON%"
+    echo  [OK] Usando Python del entorno virtual del proyecto
+    goto :python_ok
+)
+
+:: ── Prioridad 2: Python del sistema (fallback) ────────────────────────────────
 for %%P in (
     "%LOCALAPPDATA%\Programs\Python\Python312\python.exe"
     "%LOCALAPPDATA%\Programs\Python\Python311\python.exe"
@@ -22,6 +31,8 @@ for %%P in (
 )
 if not defined PYTHON_EXE where python >nul 2>&1 && set "PYTHON_EXE=python"
 if not defined PYTHON_EXE set "PYTHON_EXE=python"
+
+:python_ok
 
 :: Detectar npm por ruta absoluta
 set "NPM_EXE="
@@ -218,18 +229,8 @@ for /f "tokens=5" %%a in ('netstat -aon 2^>nul ^| findstr ":8000 "') do (
 set "LOG=%BASE%\logs\backend.log"
 echo [%DATE% %TIME%] Iniciando backend... > "%LOG%"
 
-:: Escribir el comando de arranque en un .bat temporal
-set "BAKCMD=%TEMP%\sistemaCV_backend.bat"
-echo @echo off > "%BAKCMD%"
-echo cd /d "%BASE%\backend" >> "%BAKCMD%"
-echo "%PYTHON_EXE%" -m uvicorn main:app --host 127.0.0.1 --port 8000 --no-access-log 1^>^> "%LOG%" 2^>^&1 >> "%BAKCMD%"
-
-:: Lanzar el .bat completamente oculto via WScript (0 = sin ventana)
-set "VBSCMD=%TEMP%\sistemaCV_launch.vbs"
-echo Set sh = WScript.CreateObject("WScript.Shell") > "%VBSCMD%"
-echo sh.Run "cmd.exe /c ""%BAKCMD%""", 0, False >> "%VBSCMD%"
-wscript //nologo "%VBSCMD%"
-del "%VBSCMD%" >nul 2>&1
+:: Lanzar backend en ventana minimizada (visible en barra de tareas)
+start "SistemaCV-Backend" /MIN cmd /c "cd /d "%BASE%\backend" && "%PYTHON_EXE%" -m uvicorn main:app --host 127.0.0.1 --port 8000 --no-access-log 1>> "%LOG%" 2>&1"
 
 echo  Esperando que el Backend responda...
 set /a TRIES=0
@@ -242,15 +243,19 @@ if %TRIES% GEQ 10 goto :backend_error
 goto :wait_backend
 
 :backend_ok
-del "%BAKCMD%" >nul 2>&1
 echo  [OK] Backend listo en http://127.0.0.1:8000
 timeout /t 1 /nobreak >nul
 start http://127.0.0.1:8000
 echo.
-echo  Sistema CV iniciado. La aplicacion se abrio en el navegador.
-echo  Para detener el sistema ejecuta detener.bat
+echo  ============================================================
+echo   Sistema CV iniciado correctamente.
+echo   La aplicacion se abrio en el navegador.
 echo.
-timeout /t 3 /nobreak >nul
+echo   Para detener el sistema: ejecuta detener.bat
+echo   Log del backend: %LOG%
+echo  ============================================================
+echo.
+pause
 exit /b 0
 
 :backend_error

@@ -8,7 +8,7 @@ import re
 import threading
 import traceback
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, BackgroundTasks, Body
 from sqlalchemy.orm import Session
 from typing import List
 
@@ -294,6 +294,30 @@ def historial_candidato(
         "total_procesos": len(historial),
         "historial":      historial,
     }
+
+
+# -- Actualizar nombre del candidato -----------------------------------------
+@router.patch("/{candidato_id}/nombre")
+def actualizar_nombre(
+    candidato_id: int,
+    nombre: str = Body(..., embed=True),
+    _: User = Depends(require_reclutador_or_admin),
+    db: Session = Depends(get_db),
+):
+    """Permite corregir manualmente el nombre de un candidato."""
+    nombre = nombre.strip()
+    if not nombre:
+        raise HTTPException(status_code=400, detail="El nombre no puede estar vacío.")
+    if len(nombre) > 200:
+        raise HTTPException(status_code=400, detail="El nombre no puede superar 200 caracteres.")
+
+    candidato = db.query(Candidato).filter(Candidato.id == candidato_id).first()
+    if not candidato:
+        raise HTTPException(status_code=404, detail="Candidato no encontrado.")
+
+    candidato.nombre = nombre
+    db.commit()
+    return {"id": candidato_id, "nombre": candidato.nombre}
 
 
 # -- Eliminar candidato ------------------------------------------------------

@@ -20,9 +20,11 @@ export const cvsService = {
       headers: { 'Content-Type': 'multipart/form-data' },
     }),
   analizar: (procesoId, forzar = false) =>
-  api.post(`/cvs/${procesoId}/analizar?forzar=${forzar}`),
-  cancelar:  (procesoId) => api.post(`/cvs/${procesoId}/cancelar`),
-  estado:    (procesoId) => api.get(`/cvs/${procesoId}/estado`),
+    api.post(`/cvs/${procesoId}/analizar?forzar=${forzar}`),
+  cancelar:        (procesoId)           => api.post(`/cvs/${procesoId}/cancelar`),
+  estado:          (procesoId)           => api.get(`/cvs/${procesoId}/estado`),
+  actualizarNombre: (candidatoId, nombre) =>
+    api.patch(`/cvs/${candidatoId}/nombre`, { nombre }),
 }
 
 export const reportesService = {

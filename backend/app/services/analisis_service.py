@@ -160,7 +160,8 @@ def _analizar_candidato_worker(
                 )
 
             candidato.texto_cv = texto
-            if not candidato.nombre:   candidato.nombre   = extraer_nombre(texto)
+            if not candidato.nombre:
+                candidato.nombre = extraer_nombre(texto, pdf_path=pdf_path)
             if not candidato.email:    candidato.email    = extraer_email(texto)
             if not candidato.telefono: candidato.telefono = extraer_telefono(texto)
             db.commit()
@@ -220,8 +221,13 @@ def _analizar_candidato_worker(
         _prog(analisis, db, 85, "[{}/{}] Guardando resultado...".format(idx, total))
 
         nombre_ia = resultado.get("nombre")
-        if nombre_ia and (not candidato.nombre or candidato.nombre == NOMBRE_NO_IDENTIFICADO):
+        # La IA tiene todo el texto del CV y es más precisa que la heurística.
+        # Siempre usamos el nombre que devuelve la IA si proporciona uno.
+        # Solo conservamos el nombre previo si la IA no devolvió ninguno.
+        if nombre_ia:
             candidato.nombre = nombre_ia
+        elif not candidato.nombre or candidato.nombre == NOMBRE_NO_IDENTIFICADO:
+            candidato.nombre = None  # Sin nombre confirmado
         if resultado.get("email")    and not candidato.email:    candidato.email    = resultado["email"]
         if resultado.get("telefono") and not candidato.telefono: candidato.telefono = resultado["telefono"]
 

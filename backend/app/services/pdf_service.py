@@ -7,7 +7,12 @@ import re
 from pathlib import Path
 import pdfplumber
 from app.utils.logger import get_logger
-from app.services.extractor_nombre import extraer_nombre_cv
+from app.services.extractor_nombre import (
+    extraer_nombre_cv,
+    extraer_nombre_de_metadata,
+    extraer_nombre_de_archivo,
+    NOMBRE_NO_IDENTIFICADO,
+)
 
 logger = get_logger(__name__)
 
@@ -124,6 +129,15 @@ def extraer_texto(pdf_path: Path) -> str:
         return ""
 
 
+def _extraer_metadata_pdf(pdf_path: Path) -> dict:
+    """Extrae los metadatos del PDF de forma segura."""
+    try:
+        with pdfplumber.open(pdf_path) as pdf:
+            return pdf.metadata or {}
+    except Exception:
+        return {}
+
+
 def extraer_email(texto: str) -> str | None:
     match = re.search(r'[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}', texto)
     return match.group(0) if match else None
@@ -134,12 +148,36 @@ def extraer_telefono(texto: str) -> str | None:
     return match.group(0).strip() if match else None
 
 
-def extraer_nombre(texto: str) -> str | None:
+def extraer_nombre(texto: str, pdf_path: Path | None = None) -> str | None:
     """
-    Extrae el nombre del candidato delegando al módulo extractor_nombre.
-    La IA puede completar o corregir el resultado si este falla.
+    Extrae el nombre del candidato en tres pasos:
+      1. Heurística estructural sobre el texto del CV (extractor_nombre_cv).
+      2. Metadatos del PDF (campo Author / Creator) si el paso 1 falla.
+      3. Nombre del archivo PDF como último recurso.
+
+    La IA puede completar o corregir el resultado si todos los pasos fallan.
     """
-    return extraer_nombre_cv(texto)
+    # Paso 1: heurística sobre el texto
+    nombre = extraer_nombre_cv(texto)
+    if nombre and nombre != NOMBRE_NO_IDENTIFICADO:
+        return nombre
+
+    # Paso 2: metadatos del PDF
+    if pdf_path:
+        meta = _extraer_metadata_pdf(pdf_path)
+        nombre_meta = extraer_nombre_de_metadata(meta)
+        if nombre_meta:
+            logger.info("Nombre extraído de metadatos PDF: %s", nombre_meta)
+            return nombre_meta
+
+    # Paso 3: nombre de archivo
+    if pdf_path:
+        nombre_archivo = extraer_nombre_de_archivo(str(pdf_path))
+        if nombre_archivo:
+            logger.info("Nombre extraído del nombre de archivo: %s", nombre_archivo)
+            return nombre_archivo
+
+    return NOMBRE_NO_IDENTIFICADO
 
 
 def extraer_datos_basicos(pdf_path: Path) -> dict:
