@@ -49,13 +49,27 @@ Sistema web local para el área de RR.HH que automatiza la lectura, extracción 
 
 ## Lanzadores
 
-| Archivo | Función |
-|---------|---------|
-| `instalar.bat` | Instala dependencias Python y Node (solo la primera vez) |
-| `iniciar.bat` | Inicia backend + frontend en CPU |
-| `iniciar_gpu.bat` | Inicia backend + frontend en GPU (requiere CUDA) |
-| `detener.bat` | Detiene todos los servicios |
-| `verificar.bat` | Verifica que el entorno esté correctamente configurado |
+| Archivo | Acceso | Procesamiento |
+|---------|--------|---------------|
+| `instalar.bat` | — | Instala dependencias Python y Node (solo la primera vez) |
+| `iniciar.bat` | Solo esta PC (`localhost`) | CPU |
+| `iniciar_gpu.bat` | Solo esta PC (`localhost`) | GPU / CUDA |
+| `iniciar_lan.bat` | Esta PC + toda la red local | CPU |
+| `iniciar_lan_gpu.bat` | Esta PC + toda la red local | GPU / CUDA |
+| `detener.bat` | — | Detiene todos los servicios |
+| `verificar.bat` | — | Verifica que el entorno esté configurado |
+
+### Modo LAN
+
+Los lanzadores `_lan` arrancan el backend escuchando en `0.0.0.0:8000` en lugar de `127.0.0.1:8000`, lo que permite que cualquier equipo de la red local acceda al sistema.
+
+Al iniciar en modo LAN la consola muestra las dos URLs:
+```
+Esta maquina (localhost):  http://127.0.0.1:8000
+Red local    (LAN):        http://192.168.1.100:8000   ← compartí esta con tu equipo
+```
+
+> **Firewall:** la primera vez que uses el modo LAN, Windows puede pedir permiso para que Python escuche en la red. Hacé clic en "Permitir acceso". Si el firewall bloquea la conexión, abrí el puerto 8000 en las reglas de entrada de Windows Defender Firewall.
 
 ---
 
@@ -64,8 +78,10 @@ Sistema web local para el área de RR.HH que automatiza la lectura, extracción 
 ```
 AI-Recruitment-Automation/
 │
-├── iniciar.bat                        ← Lanzador principal (detecta venv automáticamente)
-├── iniciar_gpu.bat                    ← Lanzador con GPU (CUDA)
+├── iniciar.bat                        ← Lanzador localhost / CPU
+├── iniciar_gpu.bat                    ← Lanzador localhost / GPU (CUDA)
+├── iniciar_lan.bat                    ← Lanzador LAN / CPU  (red local)
+├── iniciar_lan_gpu.bat                ← Lanzador LAN / GPU (CUDA + red local)
 ├── instalar.bat                       ← Instalador de dependencias (primera vez)
 ├── detener.bat                        ← Detiene todos los servicios
 ├── verificar.bat                      ← Verifica el entorno
